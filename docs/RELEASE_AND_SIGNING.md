@@ -15,90 +15,93 @@ Android permite instalar una actualización sobre una versión previa **únicame
 
 ## 2. Generar y resguardar la clave de firma de producción (una sola vez)
 
-Ejecuta este comando **una sola vez** en un equipo seguro (fuera del repositorio):
+Ejecuta estos pasos **una sola vez** fuera del repositorio (`C:\Users\Yojan\whatsapp-signing`, nunca dentro de `C:\Desarrollos\Whatsapp`):
 
-```bash
-keytool -genkeypair -v \
-  -keystore whatsapp-repeater-release.jks \
-  -alias whatsapp_repeater \
-  -keyalg RSA \
-  -keysize 4096 \
+### Windows PowerShell
+```powershell
+New-Item -ItemType Directory -Path "$env:USERPROFILE\whatsapp-signing" -Force
+& "C:\Program Files\Eclipse Adoptium\jdk-17.0.21.9-hotspot\bin\keytool.exe" -genkeypair -v `
+  -keystore "$env:USERPROFILE\whatsapp-signing\whatsapp-repeater-release.jks" `
+  -alias whatsapp_repeater `
+  -keyalg RSA `
+  -keysize 4096 `
   -validity 10000
 ```
 
-> **IMPORTANTE**:
-> - Guarda `whatsapp-repeater-release.jks` y sus contraseñas en un gestor de contraseñas o bóveda cifrada con respaldo offline.
-> - **Nunca** subas `.jks`, `.keystore` ni `keystore.properties` al repositorio Git (están bloqueados en `.gitignore`).
+> **Copia de seguridad obligatoria (2 ubicaciones protegidas)**:
+> 1. Copia `whatsapp-repeater-release.jks` a una unidad USB cifrada o disco externo desconectado.
+> 2. Guarda una segunda copia + las dos contraseñas (`storePassword` y `keyPassword`) y el alias (`whatsapp_repeater`) en un gestor de contraseñas cifrado (Bitwarden, 1Password, KeePassXC).
+> - **Nunca** subas `.jks`, `.keystore`, `.b64.txt` ni `keystore.properties` a Git (están bloqueados en [.gitignore](../.gitignore)).
 
 ---
 
-## 3. Configurar GitHub Secrets para CI/CD
+## 3. Configurar los 4 GitHub Secrets para CI/CD
 
-Codifica el keystore en Base64:
-- **Linux / macOS**:
-  ```bash
-  base64 -w 0 whatsapp-repeater-release.jks > keystore.b64.txt
-  ```
-- **Windows PowerShell**:
-  ```powershell
-  [Convert]::ToBase64String([IO.File]::ReadAllBytes("whatsapp-repeater-release.jks")) | Set-Content keystore.b64.txt
-  ```
+Codifica el keystore en Base64 **sin BOM ni saltos de línea** (Windows PowerShell):
 
-En tu repositorio de GitHub ve a **Settings > Secrets and variables > Actions > New repository secret** y crea estos 4 secretos:
+```powershell
+$b64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes("$env:USERPROFILE\whatsapp-signing\whatsapp-repeater-release.jks"))
+[IO.File]::WriteAllText("$env:USERPROFILE\whatsapp-signing\keystore.b64.txt", $b64)
+Get-Content "$env:USERPROFILE\whatsapp-signing\keystore.b64.txt" | Set-Clipboard
+```
+
+En GitHub (`https://github.com/the3600/WhatsApp-Repeater/settings/secrets/actions`) pulsa **New repository secret** y crea estos 4 secretos:
 
 | Secret | Contenido |
 |---|---|
-| `ANDROID_KEYSTORE_BASE64` | Contenido completo de `keystore.b64.txt` |
-| `ANDROID_KEYSTORE_PASSWORD` | Contraseña del archivo `.jks` |
-| `ANDROID_KEY_ALIAS` | Alias usado al crear la clave (ej. `whatsapp_repeater`) |
-| `ANDROID_KEY_PASSWORD` | Contraseña de la clave privada del alias |
+| `ANDROID_KEYSTORE_BASE64` | Contenido exacto de `keystore.b64.txt` (ya copiado al portapapeles) |
+| `ANDROID_KEYSTORE_PASSWORD` | Contraseña del almacén `.jks` que ingresaste en `keytool` |
+| `ANDROID_KEY_ALIAS` | `whatsapp_repeater` |
+| `ANDROID_KEY_PASSWORD` | Contraseña de la clave del alias (o la misma si pulsaste Enter) |
 
-Luego elimina `keystore.b64.txt` de tu disco local.
+Después elimina el archivo temporal `keystore.b64.txt`:
+```powershell
+Remove-Item "$env:USERPROFILE\whatsapp-signing\keystore.b64.txt" -Force
+```
 
 ---
 
-## 4. Compilar un APK de producción localmente (opcional)
+## 4. Verificar la firma en GitHub Actions (sin publicar Release todavía)
 
-Crea un archivo `keystore.properties` en la raíz del proyecto (**no lo subas a Git**):
+1. Abre **Actions → Android CI & Signed Release** en GitHub.
+2. Pulsa **Run workflow** (`workflow_dispatch`) sobre `main`.
+3. Confirma que el job `release-signed` decodifica el keystore, compila `./gradlew assembleRelease`, verifica `apksigner verify` y `com.whatsapprepeater.android`, y genera el artefacto `WhatsAppRepeater-release-signed` **sin crear ningún Release público**.
+
+---
+
+## 5. Compilar un APK Release localmente (opcional)
+
+Crea `keystore.properties` en la raíz del proyecto (**ignorado por `.gitignore`, nunca subir a Git**):
 
 ```properties
-storeFile=C:/ruta/segura/whatsapp-repeater-release.jks
-storePassword=TU_PASSWORD
+storeFile=C:/Users/Yojan/whatsapp-signing/whatsapp-repeater-release.jks
+storePassword=TU_CONTRASEÑA_DEL_ALMACEN
 keyAlias=whatsapp_repeater
-keyPassword=TU_PASSWORD_ALIAS
+keyPassword=TU_CONTRASEÑA_DE_LA_CLAVE
 ```
 
-Luego ejecuta:
-```bash
-./gradlew assembleRelease
+Ejecuta:
+```powershell
+.\gradlew.bat assembleRelease
 ```
 
-Si `keystore.properties` o las variables `ANDROID_KEYSTORE_*` no están configuradas, Gradle bloqueará `assembleRelease` intencionalmente para impedir que se publique una versión firmada con la clave de depuración.
+Si `keystore.properties` o las variables `ANDROID_KEYSTORE_*` faltan, Gradle detendrá `assembleRelease` intencionalmente para evitar publicar con clave de depuración.
 
 ---
 
-## 5. Checklist antes de publicar una nueva versión
+## 6. Checklist para publicar futuras versiones
 
-1. **Incrementar versión** en [version.properties](../version.properties):
+1. Incrementar `VERSION_CODE` y `VERSION_NAME` en [version.properties](../version.properties):
    - `1.0.0` → `VERSION_CODE=1`
    - `1.1.0` → `VERSION_CODE=2`
    - `1.2.0` → `VERSION_CODE=3`
    - `2.0.0` → `VERSION_CODE=4`
-2. **Si cambiaste entidades Room**:
-   - Incrementa `AppDatabase.CURRENT_VERSION`.
-   - Añade una `Migration(old, new)` explícita en `AppDatabase` (nunca uses `fallbackToDestructiveMigration()`).
-   - Agrega un caso de prueba en `DatabaseMigrationTest.kt` verificando conservación de registros previos.
-3. **Ejecutar pruebas**:
-   ```bash
-   ./gradlew test
-   ```
-4. **Publicar etiqueta en GitHub**:
+2. Si cambian entidades Room, incrementa `AppDatabase.CURRENT_VERSION`, agrega `Migration(old, new)` explícita y pruébala en `DatabaseMigrationTest.kt`.
+3. Ejecuta `./gradlew.bat test` y valida en teléfono físico.
+4. Cuando decidas publicar:
    ```bash
    git add version.properties
-   git commit -m "chore: release v1.1.0"
-   git tag v1.1.0
+   git commit -m "chore: release v1.0.0"
+   git tag v1.0.0
    git push origin main --tags
    ```
-
-El workflow [android-ci.yml](../.github/workflows/android-ci.yml) ejecutará todas las pruebas, compilará y firmará el APK con tus secretos, validará `applicationId`, `versionCode` y firma, calculará el `SHA-256`, generará `version-metadata.json` y publicará todo en **GitHub Releases**.
-
