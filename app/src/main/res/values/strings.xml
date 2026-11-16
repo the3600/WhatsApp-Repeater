@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">WhatsApp Repeater</string>
+    <string name="accessibility_service_label">WhatsApp Repeater — Automatización</string>
+    <string name="accessibility_service_description">Permite a WhatsApp Repeater verificar la conversación abierta en WhatsApp, escribir los mensajes confirmados por el usuario y pulsar Enviar únicamente cuando el usuario inicia una automatización explícita. No accede a otras aplicaciones.</string>
+</resources>

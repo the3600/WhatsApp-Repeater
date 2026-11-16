@@ -1,0 +1,41 @@
+# IDE & Gradle
+*.iml
+.gradle/
+.kotlin/
+.idea/
+/local.properties
+local.properties
+.DS_Store
+/captures
+.externalNativeBuild/
+.cxx/
+
+# Build outputs
+build/
+*/build/
+*/*/build/
+
+# Signing keys, secrets & credentials (NUNCA subir al repositorio)
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+*.key
+keystore.properties
+*signing*.properties
+*.b64
+*.b64.txt
+.env
+.env.*
+credentials.json
+
+# Generated APKs, AABs & distribution archives
+*.apk
+*.aab
+*.apks
+dist/
+
+# Stitch reference archive (local)
+stitch_design/
+stitch_whatsapp_repeater_android_ui_ux.zip
