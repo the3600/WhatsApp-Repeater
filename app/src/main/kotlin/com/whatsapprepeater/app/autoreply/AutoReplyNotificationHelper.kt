@@ -35,7 +35,7 @@ class AutoReplyNotificationHelper(
     sentSessionCount: Int,
   ) {
     if (!masterEnabled) {
-      NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
+      runCatching { NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID) }
       return
     }
 
@@ -47,56 +47,59 @@ class AutoReplyNotificationHelper(
       if (!granted) return
     }
 
-    val openAppIntent = PendingIntent.getActivity(
-      context,
-      11,
-      Intent(context, MainActivity::class.java).apply {
-        flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-      },
-      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-    )
-
-    val stopIntent = PendingIntent.getBroadcast(
-      context,
-      12,
-      Intent(context, StopAutoReplyReceiver::class.java),
-      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-    )
-
-    val statusText = if (listenerConnected) {
-      "Escuchando notificaciones WhatsApp • Respuestas enviadas: $sentSessionCount"
-    } else {
-      "Activo en configuración • Falta conectar Acceso a Notificaciones"
-    }
-
-    val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-      .setSmallIcon(android.R.drawable.stat_notify_chat)
-      .setContentTitle("Autorespuestas WhatsApp Repeater activas")
-      .setContentText(statusText)
-      .setStyle(NotificationCompat.BigTextStyle().bigText(statusText))
-      .setOngoing(true)
-      .setOnlyAlertOnce(true)
-      .setContentIntent(openAppIntent)
-      .addAction(
-        android.R.drawable.ic_media_pause,
-        "DETENER",
-        stopIntent,
+    runCatching {
+      val openAppIntent = PendingIntent.getActivity(
+        context,
+        11,
+        Intent(context, MainActivity::class.java).apply {
+          flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        },
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
       )
-      .build()
 
-    NotificationManagerCompat.from(context).notify(NOTIFICATION_ID, notification)
+      val stopIntent = PendingIntent.getBroadcast(
+        context,
+        12,
+        Intent(context, StopAutoReplyReceiver::class.java),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+      )
+
+      val statusText = if (listenerConnected) {
+        "Escuchando notificaciones WhatsApp • Respuestas enviadas: $sentSessionCount"
+      } else {
+        "Activo en configuración • Falta conectar Acceso a Notificaciones"
+      }
+
+      val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+        .setSmallIcon(android.R.drawable.stat_notify_chat)
+        .setContentTitle("Autorespuestas WhatsApp Repeater activas")
+        .setContentText(statusText)
+        .setStyle(NotificationCompat.BigTextStyle().bigText(statusText))
+        .setOngoing(true)
+        .setOnlyAlertOnce(true)
+        .setContentIntent(openAppIntent)
+        .addAction(
+          android.R.drawable.ic_media_pause,
+          "DETENER",
+          stopIntent,
+        )
+        .build()
+
+      NotificationManagerCompat.from(context).notify(NOTIFICATION_ID, notification)
+    }
   }
 
   private fun ensureChannel() {
-    val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-    val channel = NotificationChannel(
-      CHANNEL_ID,
-      "Estado de autorespuestas",
-      NotificationManager.IMPORTANCE_LOW,
-    ).apply {
-      description = "Muestra si el motor de autorespuestas está activo y permite detenerlo al instante."
+    runCatching {
+      val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+      val channel = NotificationChannel(
+        CHANNEL_ID,
+        "Estado de autorespuestas",
+        NotificationManager.IMPORTANCE_LOW,
+      ).apply {
+        description = "Muestra si el motor de autorespuestas está activo y permite detenerlo al instante."
+      }
+      manager.createNotificationChannel(channel)
     }
-    manager.createNotificationChannel(channel)
   }
 }
-

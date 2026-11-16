@@ -7,6 +7,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.whatsapprepeater.app.WhatsAppRepeaterApp
 import com.whatsapprepeater.core.model.AutomationConfig
@@ -23,24 +24,26 @@ class AutoReplyNotificationListenerService : NotificationListenerService() {
     AutomationConfig.WHATSAPP_BUSINESS_PACKAGE,
   )
 
-  private val coordinator: AutoReplyCoordinator
-    get() = (application as WhatsAppRepeaterApp).container.autoReplyCoordinator
+  private val coordinator: AutoReplyCoordinator?
+    get() = (applicationContext as? WhatsAppRepeaterApp)?.container?.autoReplyCoordinator
 
   override fun onListenerConnected() {
     super.onListenerConnected()
-    coordinator.setListenerConnected(true)
+    coordinator?.setListenerConnected(true)
   }
 
   override fun onListenerDisconnected() {
     super.onListenerDisconnected()
-    coordinator.setListenerConnected(false)
-    runCatching {
-      requestRebind(ComponentName(this, AutoReplyNotificationListenerService::class.java))
+    coordinator?.setListenerConnected(false)
+    if (AutoReplyPermissionsHelper.isNotificationAccessEnabled(this)) {
+      runCatching {
+        requestRebind(ComponentName(this, AutoReplyNotificationListenerService::class.java))
+      }
     }
   }
 
   override fun onDestroy() {
-    coordinator.setListenerConnected(false)
+    coordinator?.setListenerConnected(false)
     super.onDestroy()
   }
 
@@ -49,13 +52,35 @@ class AutoReplyNotificationListenerService : NotificationListenerService() {
     val pkg = sbn.packageName ?: return
     if (pkg !in allowedPackages) return
 
+    val activeCoordinator = coordinator ?: return
     val notification = sbn.notification ?: return
     // Ignorar tarjetas resumen agrupadas que no pertenecen a un chat individual respondible.
     if ((notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0) return
 
+    val parsed = runCatching { extractEventAndReplyAction(sbn, pkg, notification) }
+      .onFailure { err -> Log.e(TAG, "Error leyendo notificación entrante", err) }
+      .getOrNull() ?: return
+
+    val (event, replyAction) = parsed
+    activeCoordinator.handleIncomingNotification(event) { replyText ->
+      val action = replyAction ?: return@handleIncomingNotification RemoteInputDispatchResult(
+        sent = false,
+        failureReason = "La notificación no expone una acción RemoteInput de texto.",
+      )
+      dispatchRemoteInput(action, replyText)
+    }
+  }
+
+  private fun extractEventAndReplyAction(
+    sbn: StatusBarNotification,
+    pkg: String,
+    notification: Notification,
+  ): Pair<IncomingNotificationEvent, Notification.Action?> {
     val replyAction = findReplyAction(notification)
     val extras = notification.extras ?: Bundle.EMPTY
-    val messagingStyle = NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(notification)
+    val messagingStyle = runCatching {
+      NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(notification)
+    }.getOrNull()
 
     val latestMessage = messagingStyle?.messages?.lastOrNull()
     val localUserName = messagingStyle?.user?.name?.toString()?.trim()
@@ -83,7 +108,7 @@ class AutoReplyNotificationListenerService : NotificationListenerService() {
       senderName.equals("You", ignoreCase = true)
 
     val event = IncomingNotificationEvent(
-      notificationKey = sbn.key,
+      notificationKey = sbn.key.orEmpty(),
       packageName = pkg,
       conversationTitle = rawTitle,
       senderName = senderName,
@@ -94,50 +119,59 @@ class AutoReplyNotificationListenerService : NotificationListenerService() {
       hasReplyAction = replyAction != null,
       timestampMillis = sbn.postTime,
     )
-
-    coordinator.handleIncomingNotification(event) { replyText ->
-      val action = replyAction ?: return@handleIncomingNotification false
-      dispatchRemoteInput(action, replyText)
-    }
+    return event to replyAction
   }
 
-  private fun findReplyAction(notification: Notification): NotificationCompat.Action? {
-    val count = NotificationCompat.getActionCount(notification)
-    for (i in 0 until count) {
-      val action = NotificationCompat.getAction(notification, i) ?: continue
+  private fun findReplyAction(notification: Notification): Notification.Action? {
+    val actions = notification.actions ?: return null
+    val validReplyActions = actions.filter { action ->
       val inputs = action.remoteInputs
-      if (!inputs.isNullOrEmpty() && action.actionIntent != null) {
-        return action
-      }
+      action.actionIntent != null &&
+        !inputs.isNullOrEmpty() &&
+        inputs.any { it.allowFreeFormInput }
     }
-    return null
+    if (validReplyActions.isEmpty()) return null
+    return validReplyActions.firstOrNull {
+      it.semanticAction == Notification.Action.SEMANTIC_ACTION_REPLY
+    } ?: validReplyActions.first()
   }
 
   private fun dispatchRemoteInput(
-    action: NotificationCompat.Action,
+    action: Notification.Action,
     replyText: String,
-  ): Boolean {
-    val remoteInputs = action.remoteInputs ?: return false
-    val pendingIntent = action.actionIntent ?: return false
+  ): RemoteInputDispatchResult {
+    val remoteInputs = action.remoteInputs
+    val pendingIntent = action.actionIntent
+    if (remoteInputs.isNullOrEmpty() || pendingIntent == null) {
+      return RemoteInputDispatchResult(
+        sent = false,
+        failureReason = "Acción RemoteInput sin PendingIntent o entrada válida.",
+      )
+    }
+
     return try {
       val localIntent = Intent().addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
       val results = Bundle()
-      val frameworkInputs = remoteInputs.map { compat ->
-        results.putCharSequence(compat.resultKey, replyText)
-        RemoteInput.Builder(compat.resultKey)
-          .setLabel(compat.label)
-          .setChoices(compat.choices)
-          .setAllowFreeFormInput(compat.allowFreeFormInput)
-          .addExtras(compat.extras)
-          .build()
-      }.toTypedArray()
+      val freeFormInputs = remoteInputs.filter { it.allowFreeFormInput }
+      val targetInputs = if (freeFormInputs.isNotEmpty()) freeFormInputs.toTypedArray() else remoteInputs
 
-      RemoteInput.addResultsToIntent(frameworkInputs, localIntent, results)
+      for (input in targetInputs) {
+        results.putCharSequence(input.resultKey, replyText)
+      }
+
+      RemoteInput.addResultsToIntent(targetInputs, localIntent, results)
       pendingIntent.send(this, 0, localIntent)
-      true
-    } catch (_: Exception) {
-      false
+      RemoteInputDispatchResult(sent = true)
+    } catch (e: Exception) {
+      Log.e(TAG, "Error enviando RemoteInput", e)
+      RemoteInputDispatchResult(
+        sent = false,
+        failureReason = "${e.javaClass.simpleName}: ${e.message ?: "fallo al despachar PendingIntent"}",
+      )
     }
   }
-}
 
+  companion object {
+    private const val TAG = "AutoReplyListener"
+  }
+}

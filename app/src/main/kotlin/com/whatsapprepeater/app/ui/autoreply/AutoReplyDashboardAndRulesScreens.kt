@@ -159,6 +159,31 @@ fun AutoReplyDashboardScreen(
       verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
       // Estado maestro del Motor 2 + Parada de emergencia
+      if (!state.feedbackMessage.isNullOrBlank()) {
+        item {
+          SectionCard(
+            borderColor = if (state.isErrorFeedback) DangerRed else WhatsAppGreen,
+            containerColor = if (state.isErrorFeedback) DangerContainer.copy(alpha = 0.7f) else WhatsAppGreenContainer.copy(alpha = 0.7f),
+          ) {
+            Row(
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.SpaceBetween,
+              modifier = Modifier.fillMaxWidth(),
+            ) {
+              Text(
+                text = state.feedbackMessage.orEmpty(),
+                style = MaterialTheme.typography.bodySmall,
+                color = if (state.isErrorFeedback) DangerCoral else WhatsAppGreen,
+                modifier = Modifier.weight(1f),
+              )
+              TextButton(onClick = viewModel::clearFeedback) {
+                Text("Cerrar", color = TextPrimary)
+              }
+            }
+          }
+        }
+      }
+
       item {
         SectionCard(
           borderColor = if (isActivelyResponding) WhatsAppGreen else if (!serviceReady) WarningAmber else OutlineSubtle,

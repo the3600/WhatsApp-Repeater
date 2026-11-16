@@ -45,6 +45,34 @@ val hasReleaseSigning = releaseStoreFile != null &&
   !releaseKeyAlias.isNullOrBlank() &&
   !releaseKeyPassword.isNullOrBlank()
 
+val debugSigningPropsFile = rootProject.file("debug-signing.properties")
+val debugSigningProps = Properties().apply {
+  if (debugSigningPropsFile.exists()) {
+    debugSigningPropsFile.inputStream().use { load(it) }
+  }
+}
+val customDebugStorePath = System.getenv("ANDROID_DEBUG_KEYSTORE_PATH")
+  ?: debugSigningProps.getProperty("storeFile")
+val customDebugStoreFile = customDebugStorePath
+  ?.trim()
+  ?.takeIf { it.isNotEmpty() }
+  ?.let { path ->
+    val candidate = file(path)
+    if (candidate.exists()) candidate else rootProject.file(path)
+  }
+val customDebugStorePassword = System.getenv("ANDROID_DEBUG_KEYSTORE_PASSWORD")
+  ?: debugSigningProps.getProperty("storePassword")
+  ?: "android"
+val customDebugKeyAlias = System.getenv("ANDROID_DEBUG_KEY_ALIAS")
+  ?: debugSigningProps.getProperty("keyAlias")
+  ?: "androiddebugkey"
+val customDebugKeyPassword = System.getenv("ANDROID_DEBUG_KEY_PASSWORD")
+  ?: debugSigningProps.getProperty("keyPassword")
+  ?: "android"
+val hasCustomDebugSigning = customDebugStoreFile != null &&
+  customDebugStoreFile.exists() &&
+  customDebugStoreFile.isFile
+
 android {
   namespace = "com.whatsapprepeater.app"
   compileSdk = 36
@@ -61,6 +89,14 @@ android {
   }
 
   signingConfigs {
+    if (hasCustomDebugSigning) {
+      getByName("debug") {
+        storeFile = customDebugStoreFile
+        storePassword = customDebugStorePassword
+        keyAlias = customDebugKeyAlias
+        keyPassword = customDebugKeyPassword
+      }
+    }
     if (hasReleaseSigning) {
       create("release") {
         storeFile = releaseStoreFile

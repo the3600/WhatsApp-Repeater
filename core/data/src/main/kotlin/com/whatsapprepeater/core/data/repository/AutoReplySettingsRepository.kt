@@ -2,9 +2,11 @@ package com.whatsapprepeater.core.data.repository
 
 import android.content.Context
 import androidx.datastore.core.DataStore
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -14,11 +16,13 @@ import com.whatsapprepeater.core.model.AutoReplySettings
 import com.whatsapprepeater.core.model.AutoReplyTargetApp
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
 private val Context.autoReplyDataStore: DataStore<Preferences> by preferencesDataStore(
   name = "whatsapp_repeater_autoreply_settings",
+  corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
 )
 
 interface AutoReplySettingsRepository {
@@ -29,9 +33,35 @@ interface AutoReplySettingsRepository {
   suspend fun resetToDefaults()
 }
 
-class DataStoreAutoReplySettingsRepository(
-  private val context: Context,
+@Serializable
+private data class SchedulePrefDto(
+  val enabled: Boolean = false,
+  val startMinutesOfDay: Int = 9 * 60,
+  val endMinutesOfDay: Int = 18 * 60,
+  val daysOfWeek: Set<Int> = setOf(1, 2, 3, 4, 5, 6, 7),
+) {
+  fun toDomain(): AutoReplySchedule = AutoReplySchedule(
+    enabled = enabled,
+    startMinutesOfDay = startMinutesOfDay.coerceIn(0, 1439),
+    endMinutesOfDay = endMinutesOfDay.coerceIn(0, 1439),
+    daysOfWeek = daysOfWeek.filter { it in 1..7 }.toSet(),
+  )
+
+  companion object {
+    fun fromDomain(schedule: AutoReplySchedule): SchedulePrefDto = SchedulePrefDto(
+      enabled = schedule.enabled,
+      startMinutesOfDay = schedule.startMinutesOfDay.coerceIn(0, 1439),
+      endMinutesOfDay = schedule.endMinutesOfDay.coerceIn(0, 1439),
+      daysOfWeek = schedule.daysOfWeek.filter { it in 1..7 }.toSet(),
+    )
+  }
+}
+
+class DataStoreAutoReplySettingsRepository internal constructor(
+  private val dataStore: DataStore<Preferences>,
 ) : AutoReplySettingsRepository {
+
+  constructor(context: Context) : this(context.applicationContext.autoReplyDataStore)
 
   private val json = Json { ignoreUnknownKeys = true }
 
@@ -57,10 +87,10 @@ class DataStoreAutoReplySettingsRepository(
   }
 
   override val settings: Flow<AutoReplySettings> =
-    context.autoReplyDataStore.data.map(::extractFromPrefs)
+    dataStore.data.map(::extractFromPrefs)
 
   override suspend fun updateSettings(transform: (AutoReplySettings) -> AutoReplySettings) {
-    context.autoReplyDataStore.edit { prefs ->
+    dataStore.edit { prefs ->
       val current = extractFromPrefs(prefs)
       val next = transform(current)
       prefs[Keys.MASTER_ENABLED] = next.masterEnabled
@@ -69,13 +99,13 @@ class DataStoreAutoReplySettingsRepository(
       prefs[Keys.ALLOW_GROUPS] = next.allowGroupsByDefault
       prefs[Keys.SELECTED_CONTACTS_JSON] = json.encodeToString(next.selectedContactNamesOrPhones)
       prefs[Keys.EXCLUDED_IDENTIFIERS_JSON] = json.encodeToString(next.excludedIdentifiers)
-      prefs[Keys.GLOBAL_SCHEDULE_JSON] = json.encodeToString(next.globalSchedule)
+      prefs[Keys.GLOBAL_SCHEDULE_JSON] = json.encodeToString(SchedulePrefDto.fromDomain(next.globalSchedule))
       prefs[Keys.WELCOME_ENABLED] = next.welcomeEnabled
       prefs[Keys.WELCOME_MESSAGE] = next.welcomeMessage
       prefs[Keys.WELCOME_COOLDOWN_MINUTES] = next.welcomeCooldownMinutes.coerceIn(1, 10_080)
       prefs[Keys.AWAY_ENABLED] = next.awayEnabled
       prefs[Keys.AWAY_MESSAGE] = next.awayMessage
-      prefs[Keys.AWAY_SCHEDULE_JSON] = json.encodeToString(next.awaySchedule)
+      prefs[Keys.AWAY_SCHEDULE_JSON] = json.encodeToString(SchedulePrefDto.fromDomain(next.awaySchedule))
       prefs[Keys.MIN_INTERVAL_SECONDS] = next.minIntervalSeconds.coerceIn(0, 3_600)
       prefs[Keys.MAX_REPLIES_PER_CONV] = next.maxRepliesPerConversation.coerceIn(1, 100)
       prefs[Keys.PREVENT_LOOPS] = next.preventLoopsEnabled
@@ -85,7 +115,7 @@ class DataStoreAutoReplySettingsRepository(
   }
 
   override suspend fun resetToDefaults() {
-    context.autoReplyDataStore.edit { it.clear() }
+    dataStore.edit { it.clear() }
   }
 
   private fun extractFromPrefs(prefs: Preferences): AutoReplySettings {
@@ -106,7 +136,7 @@ class DataStoreAutoReplySettingsRepository(
         runCatching { json.decodeFromString<List<String>>(it) }.getOrNull()
       } ?: defaults.excludedIdentifiers,
       globalSchedule = prefs[Keys.GLOBAL_SCHEDULE_JSON]?.let {
-        runCatching { json.decodeFromString<AutoReplySchedule>(it) }.getOrNull()
+        runCatching { json.decodeFromString<SchedulePrefDto>(it).toDomain() }.getOrNull()
       } ?: defaults.globalSchedule,
       welcomeEnabled = prefs[Keys.WELCOME_ENABLED] ?: defaults.welcomeEnabled,
       welcomeMessage = prefs[Keys.WELCOME_MESSAGE] ?: defaults.welcomeMessage,
@@ -115,7 +145,7 @@ class DataStoreAutoReplySettingsRepository(
       awayEnabled = prefs[Keys.AWAY_ENABLED] ?: defaults.awayEnabled,
       awayMessage = prefs[Keys.AWAY_MESSAGE] ?: defaults.awayMessage,
       awaySchedule = prefs[Keys.AWAY_SCHEDULE_JSON]?.let {
-        runCatching { json.decodeFromString<AutoReplySchedule>(it) }.getOrNull()
+        runCatching { json.decodeFromString<SchedulePrefDto>(it).toDomain() }.getOrNull()
       } ?: defaults.awaySchedule,
       minIntervalSeconds = (prefs[Keys.MIN_INTERVAL_SECONDS] ?: defaults.minIntervalSeconds)
         .coerceIn(0, 3_600),

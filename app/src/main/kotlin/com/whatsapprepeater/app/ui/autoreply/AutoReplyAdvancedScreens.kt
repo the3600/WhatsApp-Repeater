@@ -1,6 +1,7 @@
 package com.whatsapprepeater.app.ui.autoreply
 
 import android.Manifest
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -24,6 +25,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -300,7 +302,10 @@ fun AutoReplyContactFiltersScreen(
           Text("No hay contactos cargados en tu dispositivo.", color = TextSecondary)
         } else {
           LazyColumn(modifier = Modifier.height(280.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            items(state.phoneContacts.take(80), key = { "${it.id}_${it.normalizedDigits}" }) { c ->
+            itemsIndexed(
+              items = state.phoneContacts.take(80),
+              key = { index, c -> "${index}_${c.id}_${c.normalizedDigits}" },
+            ) { _, c ->
               Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
@@ -807,6 +812,11 @@ fun AutoReplyPermissionsScreen(
   }
 
   val notifReady = state.isNotificationAccessEnabled || state.runtime.isListenerConnected
+  val postNotificationsLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.RequestPermission(),
+  ) { granted ->
+    viewModel.onPostNotificationsPermissionResult(granted)
+  }
 
   Column(
     modifier = Modifier
@@ -909,6 +919,38 @@ fun AutoReplyPermissionsScreen(
             icon = Icons.AutoMirrored.Rounded.OpenInNew,
             onClick = { AutoReplyPermissionsHelper.openAppDetailsSettings(context) },
           )
+        }
+      }
+
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        item {
+          SectionCard {
+            Row(
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.SpaceBetween,
+              modifier = Modifier.fillMaxWidth(),
+            ) {
+              Text("Notificación de control y parada", style = MaterialTheme.typography.titleMedium, color = TextPrimary, modifier = Modifier.weight(1f))
+              StatusBadge(
+                label = if (state.hasPostNotificationsPermission) "Concedido" else "Opcional",
+                containerColor = if (state.hasPostNotificationsPermission) WhatsAppGreenContainer else WarningContainer,
+                contentColor = if (state.hasPostNotificationsPermission) WhatsAppGreen else WarningAmber,
+              )
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+              text = "Permite mostrar el botón rápido DETENER en la barra superior mientras el Motor 2 está activo. Sin este permiso el motor también funciona sin cerrarse.",
+              style = MaterialTheme.typography.bodySmall,
+              color = TextSecondary,
+            )
+            if (!state.hasPostNotificationsPermission) {
+              Spacer(modifier = Modifier.height(10.dp))
+              LargeSecondaryButton(
+                text = "Permitir notificaciones de control",
+                onClick = { postNotificationsLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) },
+              )
+            }
+          }
         }
       }
     }

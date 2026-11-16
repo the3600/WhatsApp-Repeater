@@ -10,30 +10,40 @@ import com.whatsapprepeater.app.service.AccessibilitySettingsHelper
 object AutoReplyPermissionsHelper {
 
   fun isNotificationAccessEnabled(context: Context): Boolean =
-    NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
+    runCatching {
+      NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
+    }.getOrDefault(false)
 
-  fun isIgnoringBatteryOptimizations(context: Context): Boolean {
-    val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return false
-    return pm.isIgnoringBatteryOptimizations(context.packageName)
-  }
+  fun isIgnoringBatteryOptimizations(context: Context): Boolean =
+    runCatching {
+      val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return@runCatching false
+      pm.isIgnoringBatteryOptimizations(context.packageName)
+    }.getOrDefault(false)
 
-  fun openNotificationAccessSettings(context: Context) {
+  fun openNotificationAccessSettings(context: Context): Boolean {
     val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).apply {
       addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
-    context.startActivity(intent)
+    return runCatching {
+      context.startActivity(intent)
+      true
+    }.getOrElse {
+      AccessibilitySettingsHelper.openAppDetailsSettings(context)
+    }
   }
 
-  fun openBatteryOptimizationSettings(context: Context) {
+  fun openBatteryOptimizationSettings(context: Context): Boolean {
     val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
       addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
-    runCatching { context.startActivity(intent) }
-      .onFailure { AccessibilitySettingsHelper.openAppDetailsSettings(context) }
+    return runCatching {
+      context.startActivity(intent)
+      true
+    }.getOrElse {
+      AccessibilitySettingsHelper.openAppDetailsSettings(context)
+    }
   }
 
-  fun openAppDetailsSettings(context: Context) {
+  fun openAppDetailsSettings(context: Context): Boolean =
     AccessibilitySettingsHelper.openAppDetailsSettings(context)
-  }
 }
-

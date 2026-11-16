@@ -51,8 +51,11 @@ fun MainNavigation(container: AppContainer) {
   )
 
   fun resetToRoot(root: NavKey) {
-    backStack.clear()
+    if (backStack.size == 1 && backStack.firstOrNull() == root) return
     backStack.add(root)
+    while (backStack.size > 1) {
+      backStack.removeAt(0)
+    }
   }
 
   fun navigateBackToOrAdd(target: NavKey) {
