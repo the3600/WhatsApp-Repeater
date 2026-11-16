@@ -1,11 +1,17 @@
 package com.whatsapprepeater.core.data.backup
 
 import com.whatsapprepeater.core.model.AppSettings
+import com.whatsapprepeater.core.model.AutoReplyContactFilterMode
+import com.whatsapprepeater.core.model.AutoReplyRule
+import com.whatsapprepeater.core.model.AutoReplySchedule
+import com.whatsapprepeater.core.model.AutoReplySettings
+import com.whatsapprepeater.core.model.AutoReplyTargetApp
 import com.whatsapprepeater.core.model.ExecutionFinalStatus
 import com.whatsapprepeater.core.model.ExecutionRecord
 import com.whatsapprepeater.core.model.MessageExecutionTrace
 import com.whatsapprepeater.core.model.MessageTraceStatus
 import com.whatsapprepeater.core.model.PersistedAutomationDraft
+import com.whatsapprepeater.core.model.RuleMatchType
 import com.whatsapprepeater.core.model.SavedMessageList
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -27,6 +33,59 @@ data class BackupPayload(
   val savedLists: List<BackupSavedListDto>,
   val activeDraft: BackupDraftDto? = null,
   val history: List<BackupHistoryDto>,
+  val autoReplyRules: List<BackupAutoReplyRuleDto> = emptyList(),
+  val autoReplySettings: BackupAutoReplySettingsDto? = null,
+)
+
+@Serializable
+data class BackupAutoReplyScheduleDto(
+  val enabled: Boolean = false,
+  val startMinutesOfDay: Int = 540,
+  val endMinutesOfDay: Int = 1080,
+  val daysOfWeek: Set<Int> = setOf(1, 2, 3, 4, 5, 6, 7),
+)
+
+@Serializable
+data class BackupAutoReplyRuleDto(
+  val name: String,
+  val pattern: String,
+  val matchType: String,
+  val caseSensitive: Boolean = false,
+  val responseTemplate: String,
+  val enabled: Boolean = true,
+  val priority: Int = 10,
+  val targetApp: String = "BOTH",
+  val contactFilterMode: String = "ALL",
+  val allowGroups: Boolean = false,
+  val selectedContacts: List<String> = emptyList(),
+  val excludedIdentifiers: List<String> = emptyList(),
+  val schedule: BackupAutoReplyScheduleDto = BackupAutoReplyScheduleDto(),
+  val minIntervalSeconds: Int = 30,
+  val maxRepliesPerConversation: Int = 5,
+  val delaySeconds: Int = 0,
+  val updatedAtMillis: Long = 0L,
+)
+
+@Serializable
+data class BackupAutoReplySettingsDto(
+  val masterEnabled: Boolean = false,
+  val targetApp: String = "BOTH",
+  val globalContactFilterMode: String = "ALL",
+  val allowGroupsByDefault: Boolean = false,
+  val selectedContacts: List<String> = emptyList(),
+  val excludedIdentifiers: List<String> = emptyList(),
+  val globalSchedule: BackupAutoReplyScheduleDto = BackupAutoReplyScheduleDto(),
+  val welcomeEnabled: Boolean = false,
+  val welcomeMessage: String = "",
+  val welcomeCooldownMinutes: Int = 720,
+  val awayEnabled: Boolean = false,
+  val awayMessage: String = "",
+  val awaySchedule: BackupAutoReplyScheduleDto = BackupAutoReplyScheduleDto(enabled = true, startMinutesOfDay = 1200, endMinutesOfDay = 480),
+  val minIntervalSeconds: Int = 20,
+  val maxRepliesPerConversation: Int = 5,
+  val preventLoopsEnabled: Boolean = true,
+  val saveHistoryEnabled: Boolean = false,
+  val saveIncomingPreviewEnabled: Boolean = false,
 )
 
 @Serializable
@@ -122,6 +181,8 @@ object LocalBackupManager {
     savedLists: List<SavedMessageList>,
     activeDraft: PersistedAutomationDraft?,
     history: List<ExecutionRecord>,
+    autoReplyRules: List<AutoReplyRule> = emptyList(),
+    autoReplySettings: AutoReplySettings? = null,
   ): String {
     require(passphrase.length >= 4) { "La clave de respaldo debe tener al menos 4 caracteres." }
 
@@ -184,6 +245,64 @@ object LocalBackupManager {
               timestampMillis = t.timestampMillis,
             )
           },
+        )
+      },
+      autoReplyRules = autoReplyRules.map { r ->
+        BackupAutoReplyRuleDto(
+          name = r.name,
+          pattern = r.pattern,
+          matchType = r.matchType.name,
+          caseSensitive = r.caseSensitive,
+          responseTemplate = r.responseTemplate,
+          enabled = r.enabled,
+          priority = r.priority,
+          targetApp = r.targetApp.name,
+          contactFilterMode = r.contactFilterMode.name,
+          allowGroups = r.allowGroups,
+          selectedContacts = r.selectedContactNamesOrPhones,
+          excludedIdentifiers = r.excludedIdentifiers,
+          schedule = BackupAutoReplyScheduleDto(
+            enabled = r.schedule.enabled,
+            startMinutesOfDay = r.schedule.startMinutesOfDay,
+            endMinutesOfDay = r.schedule.endMinutesOfDay,
+            daysOfWeek = r.schedule.daysOfWeek,
+          ),
+          minIntervalSeconds = r.minIntervalSeconds,
+          maxRepliesPerConversation = r.maxRepliesPerConversation,
+          delaySeconds = r.delaySeconds,
+          updatedAtMillis = r.updatedAtMillis,
+        )
+      },
+      autoReplySettings = autoReplySettings?.let { s ->
+        BackupAutoReplySettingsDto(
+          masterEnabled = false,
+          targetApp = s.targetApp.name,
+          globalContactFilterMode = s.globalContactFilterMode.name,
+          allowGroupsByDefault = s.allowGroupsByDefault,
+          selectedContacts = s.selectedContactNamesOrPhones,
+          excludedIdentifiers = s.excludedIdentifiers,
+          globalSchedule = BackupAutoReplyScheduleDto(
+            enabled = s.globalSchedule.enabled,
+            startMinutesOfDay = s.globalSchedule.startMinutesOfDay,
+            endMinutesOfDay = s.globalSchedule.endMinutesOfDay,
+            daysOfWeek = s.globalSchedule.daysOfWeek,
+          ),
+          welcomeEnabled = s.welcomeEnabled,
+          welcomeMessage = s.welcomeMessage,
+          welcomeCooldownMinutes = s.welcomeCooldownMinutes,
+          awayEnabled = s.awayEnabled,
+          awayMessage = s.awayMessage,
+          awaySchedule = BackupAutoReplyScheduleDto(
+            enabled = s.awaySchedule.enabled,
+            startMinutesOfDay = s.awaySchedule.startMinutesOfDay,
+            endMinutesOfDay = s.awaySchedule.endMinutesOfDay,
+            daysOfWeek = s.awaySchedule.daysOfWeek,
+          ),
+          minIntervalSeconds = s.minIntervalSeconds,
+          maxRepliesPerConversation = s.maxRepliesPerConversation,
+          preventLoopsEnabled = s.preventLoopsEnabled,
+          saveHistoryEnabled = s.saveHistoryEnabled,
+          saveIncomingPreviewEnabled = s.saveIncomingPreviewEnabled,
         )
       },
     )
@@ -273,6 +392,67 @@ object LocalBackupManager {
         },
       )
     }
+
+  fun toAutoReplyRules(items: List<BackupAutoReplyRuleDto>): List<AutoReplyRule> =
+    items.map { dto ->
+      AutoReplyRule(
+        name = dto.name,
+        pattern = dto.pattern,
+        matchType = runCatching { RuleMatchType.valueOf(dto.matchType) }.getOrDefault(RuleMatchType.CONTAINS_PHRASE),
+        caseSensitive = dto.caseSensitive,
+        responseTemplate = dto.responseTemplate,
+        enabled = dto.enabled,
+        priority = dto.priority,
+        targetApp = runCatching { AutoReplyTargetApp.valueOf(dto.targetApp) }.getOrDefault(AutoReplyTargetApp.BOTH),
+        contactFilterMode = runCatching { AutoReplyContactFilterMode.valueOf(dto.contactFilterMode) }
+          .getOrDefault(AutoReplyContactFilterMode.ALL),
+        allowGroups = dto.allowGroups,
+        selectedContactNamesOrPhones = dto.selectedContacts,
+        excludedIdentifiers = dto.excludedIdentifiers,
+        schedule = AutoReplySchedule(
+          enabled = dto.schedule.enabled,
+          startMinutesOfDay = dto.schedule.startMinutesOfDay,
+          endMinutesOfDay = dto.schedule.endMinutesOfDay,
+          daysOfWeek = dto.schedule.daysOfWeek,
+        ),
+        minIntervalSeconds = dto.minIntervalSeconds,
+        maxRepliesPerConversation = dto.maxRepliesPerConversation,
+        delaySeconds = dto.delaySeconds,
+        updatedAtMillis = dto.updatedAtMillis,
+      )
+    }
+
+  fun toAutoReplySettings(dto: BackupAutoReplySettingsDto): AutoReplySettings = AutoReplySettings(
+    masterEnabled = false, // Nunca reactivar automáticamente el autorespondedor tras restaurar sin confirmación explícita
+    targetApp = runCatching { AutoReplyTargetApp.valueOf(dto.targetApp) }.getOrDefault(AutoReplyTargetApp.BOTH),
+    globalContactFilterMode = runCatching { AutoReplyContactFilterMode.valueOf(dto.globalContactFilterMode) }
+      .getOrDefault(AutoReplyContactFilterMode.ALL),
+    allowGroupsByDefault = dto.allowGroupsByDefault,
+    selectedContactNamesOrPhones = dto.selectedContacts,
+    excludedIdentifiers = dto.excludedIdentifiers,
+    globalSchedule = AutoReplySchedule(
+      enabled = dto.globalSchedule.enabled,
+      startMinutesOfDay = dto.globalSchedule.startMinutesOfDay,
+      endMinutesOfDay = dto.globalSchedule.endMinutesOfDay,
+      daysOfWeek = dto.globalSchedule.daysOfWeek,
+    ),
+    welcomeEnabled = dto.welcomeEnabled,
+    welcomeMessage = dto.welcomeMessage,
+    welcomeCooldownMinutes = dto.welcomeCooldownMinutes,
+    awayEnabled = dto.awayEnabled,
+    awayMessage = dto.awayMessage,
+    awaySchedule = AutoReplySchedule(
+      enabled = dto.awaySchedule.enabled,
+      startMinutesOfDay = dto.awaySchedule.startMinutesOfDay,
+      endMinutesOfDay = dto.awaySchedule.endMinutesOfDay,
+      daysOfWeek = dto.awaySchedule.daysOfWeek,
+    ),
+    minIntervalSeconds = dto.minIntervalSeconds,
+    maxRepliesPerConversation = dto.maxRepliesPerConversation,
+    preventLoopsEnabled = dto.preventLoopsEnabled,
+    saveHistoryEnabled = dto.saveHistoryEnabled,
+    saveIncomingPreviewEnabled = dto.saveIncomingPreviewEnabled,
+  )
 
   private fun deriveAesKey(passphrase: String, salt: ByteArray): SecretKeySpec {
     val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")

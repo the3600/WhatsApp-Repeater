@@ -8,7 +8,10 @@ import com.whatsapprepeater.app.ui.components.EmergencyStopDialog
 import com.whatsapprepeater.app.ui.components.EmergencyStopDialogState
 import com.whatsapprepeater.app.ui.components.EmergencyStopStage
 import com.whatsapprepeater.app.ui.components.EmptyStateCard
+import com.whatsapprepeater.app.ui.components.BottomTab
+import com.whatsapprepeater.app.ui.components.WhatsAppRepeaterBottomBar
 import com.whatsapprepeater.app.ui.theme.WhatsAppRepeaterTheme
+import org.junit.Assert.assertEquals
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.History
 import org.junit.Assert.assertTrue
@@ -94,6 +97,23 @@ class ComposeComponentsUiTest {
     composeRule.onNodeWithText("Volver al Inicio").performClick()
     assertTrue(wentHistory)
     assertTrue(wentHome)
+  }
+
+  @Test
+  fun bottomBar_displaysAutoResponderTabAndInvokesCallback() {
+    var selected: BottomTab? = null
+    composeRule.setContent {
+      WhatsAppRepeaterTheme {
+        WhatsAppRepeaterBottomBar(
+          currentTab = BottomTab.HOME,
+          onSelectTab = { selected = it },
+        )
+      }
+    }
+
+    composeRule.onNodeWithText("Auto").assertIsDisplayed()
+    composeRule.onNodeWithText("Auto").performClick()
+    assertEquals(BottomTab.AUTORESPONDER, selected)
   }
 }
 

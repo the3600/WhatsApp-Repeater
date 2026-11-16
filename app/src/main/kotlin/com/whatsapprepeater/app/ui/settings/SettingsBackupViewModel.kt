@@ -121,6 +121,8 @@ class SettingsBackupViewModel(
         val lists = container.savedConfigRepository.observeSavedMessageLists().first()
         val draft = container.savedConfigRepository.getActiveDraftOnce()
         val history = container.historyRepository.getAllExecutionsOnce()
+        val autoReplyRules = container.autoReplyRepository.getRulesOnce()
+        val autoReplySettings = container.autoReplySettingsRepository.settings.first()
 
         val encrypted = withContext(Dispatchers.Default) {
           LocalBackupManager.exportEncryptedJson(
@@ -129,6 +131,8 @@ class SettingsBackupViewModel(
             savedLists = lists,
             activeDraft = draft,
             history = history,
+            autoReplyRules = autoReplyRules,
+            autoReplySettings = autoReplySettings,
           )
         }
 
@@ -230,6 +234,23 @@ class SettingsBackupViewModel(
           if (key !in existingHistoryKeys) {
             container.historyRepository.recordExecution(record)
           }
+        }
+
+        // Restaurar reglas y configuración del Motor 2 sin duplicar
+        val existingRuleKeys = container.autoReplyRepository
+          .getRulesOnce()
+          .map { "${it.name}_${it.pattern}_${it.matchType.name}" }
+          .toSet()
+
+        LocalBackupManager.toAutoReplyRules(payload.autoReplyRules).forEach { rule ->
+          val key = "${rule.name}_${rule.pattern}_${rule.matchType.name}"
+          if (key !in existingRuleKeys) {
+            container.autoReplyRepository.saveRule(rule)
+          }
+        }
+        payload.autoReplySettings?.let { restoredAuto ->
+          val parsed = LocalBackupManager.toAutoReplySettings(restoredAuto)
+          container.autoReplySettingsRepository.updateSettings { parsed }
         }
 
         refreshStorageStats(context)

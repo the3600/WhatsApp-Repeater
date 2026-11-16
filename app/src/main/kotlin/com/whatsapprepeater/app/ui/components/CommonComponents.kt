@@ -25,6 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.AccessibilityNew
 import androidx.compose.material.icons.rounded.AddCircle
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Home
@@ -55,6 +56,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.whatsapprepeater.app.R
 import com.whatsapprepeater.app.ui.theme.BackgroundBlack
 import com.whatsapprepeater.app.ui.theme.CardSurface
@@ -74,6 +76,7 @@ import com.whatsapprepeater.app.ui.theme.WhatsAppGreenContainer
 enum class BottomTab(val label: String, val icon: ImageVector) {
   HOME("Inicio", Icons.Rounded.Home),
   CREATE("Crear", Icons.Rounded.AddCircle),
+  AUTORESPONDER("Auto", Icons.Rounded.AutoAwesome),
   HISTORY("Historial", Icons.Rounded.History),
   SETTINGS("Ajustes", Icons.Rounded.Settings),
 }
@@ -170,6 +173,10 @@ fun WhatsAppRepeaterBottomBar(
         label = {
           Text(
             text = tab.label,
+            fontSize = 11.sp,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
           )
         },

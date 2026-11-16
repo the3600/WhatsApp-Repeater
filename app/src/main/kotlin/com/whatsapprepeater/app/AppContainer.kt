@@ -3,6 +3,8 @@ package com.whatsapprepeater.app
 import android.app.Application
 import android.content.Context
 import androidx.room.Room
+import com.whatsapprepeater.app.autoreply.AutoReplyCoordinator
+import com.whatsapprepeater.app.autoreply.AutoReplyNotificationHelper
 import com.whatsapprepeater.app.service.AndroidAccessibilityDriver
 import com.whatsapprepeater.app.service.AutomationNotificationHelper
 import com.whatsapprepeater.app.updater.UpdateManager
@@ -10,9 +12,13 @@ import com.whatsapprepeater.core.automation.AutomationEngine
 import com.whatsapprepeater.core.data.local.AppDatabase
 import com.whatsapprepeater.core.data.local.DatabaseBackupManager
 import com.whatsapprepeater.core.data.repository.AndroidContactsRepository
+import com.whatsapprepeater.core.data.repository.AutoReplyRepository
+import com.whatsapprepeater.core.data.repository.AutoReplySettingsRepository
 import com.whatsapprepeater.core.data.repository.ContactsRepository
+import com.whatsapprepeater.core.data.repository.DataStoreAutoReplySettingsRepository
 import com.whatsapprepeater.core.data.repository.DataStoreSettingsRepository
 import com.whatsapprepeater.core.data.repository.HistoryRepository
+import com.whatsapprepeater.core.data.repository.RoomAutoReplyRepository
 import com.whatsapprepeater.core.data.repository.RoomHistoryRepository
 import com.whatsapprepeater.core.data.repository.RoomSavedConfigRepository
 import com.whatsapprepeater.core.data.repository.SavedConfigRepository
@@ -132,7 +138,7 @@ class AppContainer(context: Context) {
     AppDatabase::class.java,
     AppDatabase.DB_NAME,
   )
-    .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3)
+    .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3, AppDatabase.MIGRATION_3_4)
     // Nunca usar fallbackToDestructiveMigration() para no borrar datos al actualizar.
     .build()
 
@@ -141,11 +147,26 @@ class AppContainer(context: Context) {
     savedMessageListDao = database.savedMessageListDao(),
     automationConfigDao = database.automationConfigDao(),
   )
+  val autoReplyRepository: AutoReplyRepository = RoomAutoReplyRepository(
+    ruleDao = database.autoReplyRuleDao(),
+    logDao = database.autoReplyLogDao(),
+  )
+  val autoReplySettingsRepository: AutoReplySettingsRepository = DataStoreAutoReplySettingsRepository(context)
   val settingsRepository: SettingsRepository = DataStoreSettingsRepository(context)
   val contactsRepository: ContactsRepository = AndroidContactsRepository(context)
   val accessibilityDriver = AndroidAccessibilityDriver(context)
   val updateManager = UpdateManager(context)
   private val notificationHelper = AutomationNotificationHelper(context)
+  private val autoReplyNotificationHelper = AutoReplyNotificationHelper(context)
+
+  val autoReplyCoordinator = AutoReplyCoordinator(
+    appContext = appContext,
+    autoReplyRepository = autoReplyRepository,
+    autoReplySettingsRepository = autoReplySettingsRepository,
+    contactsRepository = contactsRepository,
+    notificationHelper = autoReplyNotificationHelper,
+    scope = appScope,
+  )
 
   val automationEngine = AutomationEngine(
     driver = accessibilityDriver,
@@ -230,8 +251,11 @@ class AppContainer(context: Context) {
 
   suspend fun factoryResetLocalData() {
     automationEngine.stop()
+    autoReplyCoordinator.emergencyStop()
     historyRepository.clearHistory()
+    autoReplyRepository.clearHistory()
     settingsRepository.resetToDefaults()
+    autoReplySettingsRepository.resetToDefaults()
     resetDraftForNewAutomation(
       defaultMin = SafetyLimits.DEFAULT_MIN_INTERVAL_SECONDS,
       defaultMax = SafetyLimits.DEFAULT_MAX_INTERVAL_SECONDS,

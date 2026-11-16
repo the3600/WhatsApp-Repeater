@@ -35,5 +35,6 @@ rootProject.name = "WhatsApp Repeater"
 include(":app")
 include(":core:model")
 include(":core:automation")
+include(":core:autoresponder")
 include(":core:data")
 include(":core:updater")

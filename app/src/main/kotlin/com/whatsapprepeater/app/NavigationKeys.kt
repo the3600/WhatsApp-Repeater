@@ -17,3 +17,12 @@ import kotlinx.serialization.Serializable
 @Serializable data object SettingsRoute : NavKey
 @Serializable data object PermissionsRoute : NavKey
 @Serializable data object UpdatesRoute : NavKey
+@Serializable data object AutoReplyDashboardRoute : NavKey
+@Serializable data object AutoReplyRulesRoute : NavKey
+@Serializable data class AutoReplyRuleEditorRoute(val ruleId: Long = 0L) : NavKey
+@Serializable data object AutoReplyContactFiltersRoute : NavKey
+@Serializable data object AutoReplyScheduleRoute : NavKey
+@Serializable data object AutoReplyWelcomeRoute : NavKey
+@Serializable data object AutoReplyAwayRoute : NavKey
+@Serializable data object AutoReplyHistoryRoute : NavKey
+@Serializable data object AutoReplyPermissionsRoute : NavKey

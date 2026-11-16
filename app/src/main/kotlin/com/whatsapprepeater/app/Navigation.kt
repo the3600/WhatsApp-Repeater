@@ -11,6 +11,16 @@ import androidx.navigation3.ui.NavDisplay
 import com.whatsapprepeater.app.ui.automation.AutomationScreen
 import com.whatsapprepeater.app.ui.automation.AutomationViewModel
 import com.whatsapprepeater.app.ui.automation.ConfirmationScreen
+import com.whatsapprepeater.app.ui.autoreply.AutoReplyAwayScreen
+import com.whatsapprepeater.app.ui.autoreply.AutoReplyContactFiltersScreen
+import com.whatsapprepeater.app.ui.autoreply.AutoReplyDashboardScreen
+import com.whatsapprepeater.app.ui.autoreply.AutoReplyHistoryScreen
+import com.whatsapprepeater.app.ui.autoreply.AutoReplyPermissionsScreen
+import com.whatsapprepeater.app.ui.autoreply.AutoReplyRuleEditorScreen
+import com.whatsapprepeater.app.ui.autoreply.AutoReplyRulesScreen
+import com.whatsapprepeater.app.ui.autoreply.AutoReplyScheduleScreen
+import com.whatsapprepeater.app.ui.autoreply.AutoReplyViewModel
+import com.whatsapprepeater.app.ui.autoreply.AutoReplyWelcomeScreen
 import com.whatsapprepeater.app.ui.components.BottomTab
 import com.whatsapprepeater.app.ui.config.AutomationTypeScreen
 import com.whatsapprepeater.app.ui.config.IntervalConfigScreen
@@ -68,6 +78,7 @@ fun MainNavigation(container: AppContainer) {
         )
         backStack.add(ContactPickerRoute)
       }
+      BottomTab.AUTORESPONDER -> resetToRoot(AutoReplyDashboardRoute)
       BottomTab.HISTORY -> resetToRoot(HistoryRoute)
       BottomTab.SETTINGS -> resetToRoot(SettingsRoute)
     }
@@ -217,6 +228,81 @@ fun MainNavigation(container: AppContainer) {
         UpdatesScreen(
           viewModel = vm,
           updateManager = container.updateManager,
+          onBack = { backStack.removeLastOrNull() },
+        )
+      }
+      entry<AutoReplyDashboardRoute> {
+        val vm: AutoReplyViewModel = viewModel(factory = AutoReplyViewModel.factory(container))
+        AutoReplyDashboardScreen(
+          viewModel = vm,
+          onOpenRules = { backStack.add(AutoReplyRulesRoute) },
+          onCreateRule = { backStack.add(AutoReplyRuleEditorRoute(ruleId = 0L)) },
+          onOpenContactFilters = { backStack.add(AutoReplyContactFiltersRoute) },
+          onOpenSchedule = { backStack.add(AutoReplyScheduleRoute) },
+          onOpenWelcome = { backStack.add(AutoReplyWelcomeRoute) },
+          onOpenAway = { backStack.add(AutoReplyAwayRoute) },
+          onOpenHistory = { backStack.add(AutoReplyHistoryRoute) },
+          onOpenAutoReplyPermissions = { backStack.add(AutoReplyPermissionsRoute) },
+          onOpenAccessibilityPermissions = { backStack.add(PermissionsRoute) },
+          onSelectBottomTab = ::navigateByBottomTab,
+        )
+      }
+      entry<AutoReplyRulesRoute> {
+        val vm: AutoReplyViewModel = viewModel(factory = AutoReplyViewModel.factory(container))
+        AutoReplyRulesScreen(
+          viewModel = vm,
+          onBack = { backStack.removeLastOrNull() },
+          onCreateRule = { backStack.add(AutoReplyRuleEditorRoute(ruleId = 0L)) },
+          onEditRule = { ruleId -> backStack.add(AutoReplyRuleEditorRoute(ruleId = ruleId)) },
+        )
+      }
+      entry<AutoReplyRuleEditorRoute> { key ->
+        val vm: AutoReplyViewModel = viewModel(factory = AutoReplyViewModel.factory(container))
+        AutoReplyRuleEditorScreen(
+          ruleId = key.ruleId,
+          viewModel = vm,
+          onBack = { backStack.removeLastOrNull() },
+        )
+      }
+      entry<AutoReplyContactFiltersRoute> {
+        val vm: AutoReplyViewModel = viewModel(factory = AutoReplyViewModel.factory(container))
+        AutoReplyContactFiltersScreen(
+          viewModel = vm,
+          onBack = { backStack.removeLastOrNull() },
+        )
+      }
+      entry<AutoReplyScheduleRoute> {
+        val vm: AutoReplyViewModel = viewModel(factory = AutoReplyViewModel.factory(container))
+        AutoReplyScheduleScreen(
+          viewModel = vm,
+          onBack = { backStack.removeLastOrNull() },
+        )
+      }
+      entry<AutoReplyWelcomeRoute> {
+        val vm: AutoReplyViewModel = viewModel(factory = AutoReplyViewModel.factory(container))
+        AutoReplyWelcomeScreen(
+          viewModel = vm,
+          onBack = { backStack.removeLastOrNull() },
+        )
+      }
+      entry<AutoReplyAwayRoute> {
+        val vm: AutoReplyViewModel = viewModel(factory = AutoReplyViewModel.factory(container))
+        AutoReplyAwayScreen(
+          viewModel = vm,
+          onBack = { backStack.removeLastOrNull() },
+        )
+      }
+      entry<AutoReplyHistoryRoute> {
+        val vm: AutoReplyViewModel = viewModel(factory = AutoReplyViewModel.factory(container))
+        AutoReplyHistoryScreen(
+          viewModel = vm,
+          onBack = { backStack.removeLastOrNull() },
+        )
+      }
+      entry<AutoReplyPermissionsRoute> {
+        val vm: AutoReplyViewModel = viewModel(factory = AutoReplyViewModel.factory(container))
+        AutoReplyPermissionsScreen(
+          viewModel = vm,
           onBack = { backStack.removeLastOrNull() },
         )
       }

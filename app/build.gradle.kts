@@ -119,6 +119,7 @@ tasks.configureEach {
 dependencies {
   implementation(project(":core:model"))
   implementation(project(":core:automation"))
+  implementation(project(":core:autoresponder"))
   implementation(project(":core:data"))
   implementation(project(":core:updater"))
 

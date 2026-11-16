@@ -5,8 +5,14 @@ import com.whatsapprepeater.core.data.backup.LocalBackupManager
 import com.whatsapprepeater.core.data.local.AppDatabase
 import com.whatsapprepeater.core.data.local.DatabaseBackupManager
 import com.whatsapprepeater.core.model.AppSettings
+import com.whatsapprepeater.core.model.AutoReplyContactFilterMode
+import com.whatsapprepeater.core.model.AutoReplyRule
+import com.whatsapprepeater.core.model.AutoReplySchedule
+import com.whatsapprepeater.core.model.AutoReplySettings
+import com.whatsapprepeater.core.model.AutoReplyTargetApp
 import com.whatsapprepeater.core.model.ExecutionFinalStatus
 import com.whatsapprepeater.core.model.ExecutionRecord
+import com.whatsapprepeater.core.model.RuleMatchType
 import com.whatsapprepeater.core.model.SavedMessageList
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -73,6 +79,7 @@ class DatabaseMigrationTest {
 
         AppDatabase.MIGRATION_1_2.migrate(proxyDb)
         AppDatabase.MIGRATION_2_3.migrate(proxyDb)
+        AppDatabase.MIGRATION_3_4.migrate(proxyDb)
         stmt.execute("PRAGMA user_version = ${AppDatabase.CURRENT_VERSION}")
 
         stmt.executeQuery("SELECT contactName, confirmedCount, batchCode, messageTracesJson FROM execution_history").use { rs ->
@@ -81,6 +88,19 @@ class DatabaseMigrationTest {
           assertEquals(4, rs.getInt(2))
           assertEquals("", rs.getString(3))
           assertEquals("[]", rs.getString(4))
+        }
+
+        stmt.execute(
+          """
+          INSERT INTO `auto_reply_rules`
+          (`name`, `pattern`, `matchType`, `caseSensitive`, `responseTemplate`, `enabled`, `priority`, `targetApp`, `contactFilterMode`, `allowGroups`, `selectedContactsJson`, `excludedIdentifiersJson`, `scheduleEnabled`, `scheduleStartMinutes`, `scheduleEndMinutes`, `scheduleDaysJson`, `minIntervalSeconds`, `maxRepliesPerConversation`, `delaySeconds`, `updatedAtMillis`)
+          VALUES ('Bienvenida VIP', 'precio', 'CONTAINS_WORD', 0, 'Hola {nombre}', 1, 10, 'BOTH', 'ALL', 0, '[]', '[]', 0, 540, 1080, '[1,2,3,4,5,6,7]', 30, 5, 0, 1700000002000)
+          """.trimIndent(),
+        )
+        stmt.executeQuery("SELECT name, pattern FROM auto_reply_rules").use { rs ->
+          assertTrue(rs.next())
+          assertEquals("Bienvenida VIP", rs.getString(1))
+          assertEquals("precio", rs.getString(2))
         }
 
         stmt.execute(
@@ -172,5 +192,55 @@ class DatabaseMigrationTest {
       """{"format":"whatsapp-repeater-backup-v1","algorithm":"AES-256-GCM","saltBase64":"!!!","ivBase64":"!!!","cipherTextBase64":"!!!","payloadSha256":"abc"}""",
       "clave-correcta",
     )
+  }
+
+  @Test
+  fun `roundtrips encrypted backup including auto reply rules and safe disabled master toggle`() {
+    val rule = AutoReplyRule(
+      id = 7L,
+      name = "Saludo automatico",
+      pattern = "hola|buenas",
+      matchType = RuleMatchType.REGEX,
+      responseTemplate = "Hola {nombre}, recibi tu mensaje.",
+      targetApp = AutoReplyTargetApp.WHATSAPP_ONLY,
+      contactFilterMode = AutoReplyContactFilterMode.SAVED_CONTACTS_ONLY,
+      schedule = AutoReplySchedule(enabled = true, startMinutesOfDay = 540, endMinutesOfDay = 1080),
+      delaySeconds = 3,
+      minIntervalSeconds = 60,
+      maxRepliesPerConversation = 2,
+      priority = 10,
+      enabled = true,
+    )
+    val autoSettings = AutoReplySettings(
+      masterEnabled = true,
+      welcomeEnabled = true,
+      welcomeMessage = "Bienvenido {nombre}",
+      awayEnabled = true,
+      awayMessage = "Volvemos pronto",
+      awaySchedule = AutoReplySchedule(enabled = true, startMinutesOfDay = 1320, endMinutesOfDay = 420),
+      saveHistoryEnabled = true,
+    )
+
+    val encrypted = LocalBackupManager.exportEncryptedJson(
+      passphrase = "mi-clave-segura",
+      settings = AppSettings(),
+      savedLists = emptyList(),
+      activeDraft = null,
+      history = emptyList(),
+      autoReplyRules = listOf(rule),
+      autoReplySettings = autoSettings,
+    )
+    val restored = LocalBackupManager.importEncryptedJson(encrypted, "mi-clave-segura")
+    val restoredRules = LocalBackupManager.toAutoReplyRules(restored.autoReplyRules)
+    val restoredSettings = restored.autoReplySettings?.let { LocalBackupManager.toAutoReplySettings(it) }
+
+    assertEquals(1, restoredRules.size)
+    assertEquals("Saludo automatico", restoredRules.first().name)
+    assertEquals(RuleMatchType.REGEX, restoredRules.first().matchType)
+    assertEquals(AutoReplyContactFilterMode.SAVED_CONTACTS_ONLY, restoredRules.first().contactFilterMode)
+    // Master toggle always restores disabled for safety until the user turns it back on
+    assertEquals(false, restoredSettings?.masterEnabled)
+    assertEquals(true, restoredSettings?.welcomeEnabled)
+    assertEquals("Volvemos pronto", restoredSettings?.awayMessage)
   }
 }
