@@ -234,11 +234,19 @@ fun PermissionsAccessibilityScreen(
 
       item {
         SectionCard {
-          Text("Cómo activar el servicio en Android", style = MaterialTheme.typography.titleMedium, color = TextPrimary)
+          Text("Cómo activar el servicio en Android 13, 14 y 15", style = MaterialTheme.typography.titleMedium, color = TextPrimary)
           Spacer(modifier = Modifier.height(10.dp))
-          StepGuideRow(1, "Pulsa \"Abrir ajustes de Android\"", "Se abrirá la pantalla nativa de Accesibilidad del sistema.")
-          StepGuideRow(2, "Selecciona \"WhatsApp Repeater\"", "Búscalo en Aplicaciones instaladas o Servicios descargados.")
-          StepGuideRow(3, "Activa el interruptor y confirma", "Si instalaste el APK manualmente en Android 13+, habilita primero \"Permitir ajustes restringidos\" en Ajustes > Aplicaciones.")
+          StepGuideRow(1, "Intenta activar el interruptor en Accesibilidad", "Pulsa \"Abrir ajustes de Android\" → Aplicaciones instaladas → WhatsApp Repeater. Si aparece \"Ajustes restringidos\", cierra el aviso (esto desbloquea la opción en el siguiente paso).")
+          StepGuideRow(2, "Autoriza \"Permitir ajustes restringidos\"", "En Android 13+, las apps instaladas fuera de Play Store requieren este desbloqueo oficial del sistema. Pulsa abajo \"Abrir info de la app\" → menú ⋮ arriba a la derecha → Permitir ajustes restringidos.")
+          StepGuideRow(3, "Regresa a Accesibilidad y activa el servicio", "Una vez autorizado con tu PIN o huella, vuelve a Accesibilidad y enciende WhatsApp Repeater.")
+          if (!active && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Spacer(modifier = Modifier.height(10.dp))
+            LargeSecondaryButton(
+              text = "Abrir info de la app (Ajustes restringidos)",
+              icon = Icons.AutoMirrored.Rounded.OpenInNew,
+              onClick = { AccessibilitySettingsHelper.openAppDetailsSettings(context) },
+            )
+          }
         }
       }
 

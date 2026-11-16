@@ -58,19 +58,24 @@ class WhatsAppNavigator {
   private val composerHints = listOf("mensaje", "message", "escribe", "type a message")
 
   fun inspectScreen(snapshot: ScreenSnapshot?): WhatsAppScreen {
-    if (snapshot == null || snapshot.root == null) {
+    if (snapshot == null) {
       return WhatsAppScreen.UnexpectedOrError(
         reason = "No se pudo leer la jerarquía visual de la pantalla actual.",
         isSecurityOrCaptcha = false,
       )
     }
 
-    val pkg = snapshot.foregroundPackage ?: snapshot.root.packageName
+    val pkg = snapshot.foregroundPackage ?: snapshot.root?.packageName
     if (pkg != null && pkg !in supportedPackages) {
       return WhatsAppScreen.ExternalApp(pkg)
     }
 
-    val visibleNodes = snapshot.root.flatten().filter { it.isVisibleToUser }
+    val root = snapshot.root ?: return WhatsAppScreen.UnexpectedOrError(
+      reason = "No se pudo leer la jerarquía visual de la pantalla actual.",
+      isSecurityOrCaptcha = false,
+    )
+
+    val visibleNodes = root.flatten().filter { it.isVisibleToUser }
     if (visibleNodes.isEmpty()) {
       return WhatsAppScreen.UnexpectedOrError(
         reason = "La pantalla de WhatsApp no expone nodos visibles para accesibilidad.",

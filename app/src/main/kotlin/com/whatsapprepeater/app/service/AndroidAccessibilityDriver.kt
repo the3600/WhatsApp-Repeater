@@ -104,9 +104,24 @@ class AndroidAccessibilityDriver(
       null
     } ?: return null
 
+    val metrics = appContext.resources.displayMetrics
+    val activePkg = rootNode.packageName?.toString() ?: service.lastForegroundPackage
+    if (activePkg != null &&
+      activePkg != AutomationConfig.WHATSAPP_PACKAGE &&
+      activePkg != AutomationConfig.WHATSAPP_BUSINESS_PACKAGE
+    ) {
+      // Nunca recorrer ni almacenar nodos de aplicaciones externas fuera de WhatsApp.
+      activeNodes = emptyMap()
+      return ScreenSnapshot(
+        foregroundPackage = activePkg,
+        screenWidth = metrics.widthPixels,
+        screenHeight = metrics.heightPixels,
+        root = null,
+      )
+    }
+
     val nodeRegistry = HashMap<String, AccessibilityNodeInfo>()
     var counter = 0
-    val metrics = appContext.resources.displayMetrics
 
     fun mapNode(node: AccessibilityNodeInfo, depth: Int): UiNodeSnapshot? {
       if (depth > 24 || counter >= 350) return null

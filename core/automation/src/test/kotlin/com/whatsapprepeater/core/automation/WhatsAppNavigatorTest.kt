@@ -110,5 +110,20 @@ class WhatsAppNavigatorTest {
     assertTrue(screen is WhatsAppScreen.HomeChatList)
     assertEquals("search_btn", (screen as WhatsAppScreen.HomeChatList).searchButtonNode?.nodeId)
   }
+
+  @Test
+  fun `reports external app without needing any traversed node tree`() {
+    val screen = navigator.inspectScreen(
+      ScreenSnapshot(
+        foregroundPackage = "com.android.settings",
+        screenWidth = 1080,
+        screenHeight = 1920,
+        root = null,
+      ),
+    )
+
+    assertTrue(screen is WhatsAppScreen.ExternalApp)
+    assertEquals("com.android.settings", (screen as WhatsAppScreen.ExternalApp).packageName)
+  }
 }
 
