@@ -8,6 +8,12 @@ on:
   pull_request:
     branches: [ main, master ]
   workflow_dispatch:
+    inputs:
+      build_release:
+        description: 'Compilar APK Release firmado (solo si los 4 Secrets están configurados)'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -39,23 +45,30 @@ jobs:
       - name: Compilar APK de depuración (verificación CI)
         run: ./gradlew assembleDebug
 
-      - name: Verificar identidad fija de aplicación en APK
+      - name: Verificar identidad fija de aplicación en APK Debug
         run: |
           AAPT2=$(find "$ANDROID_HOME/build-tools" -name "aapt2" | sort -V | tail -n 1)
           BADGING=$("$AAPT2" dump badging app/build/outputs/apk/debug/app-debug.apk)
           echo "$BADGING" | head -n 5
           echo "$BADGING" | grep -q "package: name='com.whatsapprepeater.android'"
 
-      - name: Subir APK de depuración para pruebas internas
+      - name: Preparar APK Debug descargable con nombre reconocible
+        run: |
+          mkdir -p dist-debug
+          cp app/build/outputs/apk/debug/app-debug.apk dist-debug/WhatsApp-Repeater-Android.apk
+          ls -lh dist-debug/WhatsApp-Repeater-Android.apk
+
+      - name: Subir APK Debug como Artifact descargable
         uses: actions/upload-artifact@v4
         with:
-          name: WhatsAppRepeater-debug-internal
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: WhatsApp-Repeater-Android
+          path: dist-debug/WhatsApp-Repeater-Android.apk
+          if-no-files-found: error
 
   release-signed:
     name: Firmar APK de producción y publicar Release
     needs: test-and-debug
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.build_release == true)
     runs-on: ubuntu-latest
 
     steps:
