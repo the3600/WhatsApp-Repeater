@@ -9,6 +9,16 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
     inputs:
+      publish_debug_prerelease:
+        description: 'Publicar versión preliminar Debug en GitHub Releases (Pre-release)'
+        required: false
+        default: false
+        type: boolean
+      prerelease_tag:
+        description: 'Etiqueta para la versión preliminar Debug'
+        required: false
+        default: 'v1.0.0'
+        type: string
       build_release:
         description: 'Compilar APK Release firmado (solo si los 4 Secrets están configurados)'
         required: false
@@ -48,9 +58,11 @@ jobs:
       - name: Verificar identidad fija de aplicación en APK Debug
         run: |
           AAPT2=$(find "$ANDROID_HOME/build-tools" -name "aapt2" | sort -V | tail -n 1)
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name "apksigner" | sort -V | tail -n 1)
           BADGING=$("$AAPT2" dump badging app/build/outputs/apk/debug/app-debug.apk)
           echo "$BADGING" | head -n 5
           echo "$BADGING" | grep -q "package: name='com.whatsapprepeater.android'"
+          "$APKSIGNER" verify --verbose app/build/outputs/apk/debug/app-debug.apk
 
       - name: Preparar APK Debug descargable con nombre reconocible
         run: |
@@ -64,6 +76,66 @@ jobs:
           name: WhatsApp-Repeater-Android
           path: dist-debug/WhatsApp-Repeater-Android.apk
           if-no-files-found: error
+
+  publish-debug-prerelease:
+    name: Publicar Pre-release preliminar Debug en Releases
+    needs: test-and-debug
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_debug_prerelease == true && inputs.build_release != true
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Descargar código fuente
+        uses: actions/checkout@v4
+
+      - name: Descargar Artifact APK Debug verificado
+        uses: actions/download-artifact@v4
+        with:
+          name: WhatsApp-Repeater-Android
+          path: dist-debug
+
+      - name: Generar SHA-256 y notas en español (firma Debug)
+        id: meta
+        run: |
+          set -euo pipefail
+          source version.properties
+          APK_FILE="dist-debug/WhatsApp-Repeater-Android.apk"
+          test -s "$APK_FILE"
+          SHA256=$(sha256sum "$APK_FILE" | awk '{print $1}')
+          echo "$SHA256  WhatsApp-Repeater-Android.apk" > "${APK_FILE}.sha256"
+
+          cat > dist-debug/release-notes-debug.md <<EOF
+          > ⚠️ **Versión preliminar de pruebas (firma Debug)**
+          > Este APK está firmado con **clave Debug** únicamente para pruebas funcionales e instalación directa en dispositivos autorizados. **No es un Release definitivo de producción.**
+
+          ### Detalles del paquete
+          - **Aplicación:** WhatsApp Repeater
+          - **Application ID:** \`com.whatsapprepeater.android\`
+          - **Versión:** \`${VERSION_NAME}\` (\`versionCode=${VERSION_CODE}\`)
+          - **Archivo APK:** \`WhatsApp-Repeater-Android.apk\`
+          - **SHA-256:** \`${SHA256}\`
+
+          ### Instalación en Android
+          1. Descarga \`WhatsApp-Repeater-Android.apk\` desde los archivos adjuntos (**Assets**) de este lanzamiento.
+          2. Ábrelo desde **Descargas / Archivos** y autoriza **Instalar aplicaciones desconocidas** si Android lo solicita.
+          3. En Android 13+, si el Servicio de Accesibilidad aparece restringido, entra a **Ajustes → Aplicaciones → WhatsApp Repeater → menú \`⋮\` → Permitir ajustes restringidos**.
+
+          > **Nota importante sobre actualizaciones futuras:** Al migrar por primera vez de esta compilación **Debug** a la versión **Release definitiva firmada con tu keystore de producción**, Android requerirá desinstalar la versión Debug una única vez. A partir del primer Release firmado de producción, todas las actualizaciones conservarán automáticamente tus datos.
+          EOF
+
+          echo "version_name=${VERSION_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Publicar Pre-release Debug en GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.prerelease_tag || 'v1.0.0' }}
+          name: "WhatsApp Repeater ${{ steps.meta.outputs.version_name }} – Versión de pruebas Debug"
+          prerelease: true
+          draft: false
+          target_commitish: ${{ github.sha }}
+          body_path: dist-debug/release-notes-debug.md
+          files: |
+            dist-debug/WhatsApp-Repeater-Android.apk
+            dist-debug/WhatsApp-Repeater-Android.apk.sha256
 
   release-signed:
     name: Firmar APK de producción y publicar Release
