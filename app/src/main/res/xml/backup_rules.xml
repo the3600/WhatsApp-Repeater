@@ -4,6 +4,4 @@
     <include domain="database" path="whatsapp_repeater.db-wal" />
     <include domain="database" path="whatsapp_repeater.db-shm" />
     <include domain="file" path="datastore/" />
-    <exclude domain="file" path="updates/" />
-    <exclude domain="file" path="db_backups/" />
 </full-backup-content>

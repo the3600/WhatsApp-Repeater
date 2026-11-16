@@ -364,7 +364,12 @@ fun UpdatesScreen(
               }
 
               Spacer(modifier = Modifier.height(14.dp))
-              if (state.downloadedApkFile == null) {
+              if (state.isDownloading) {
+                LargeSecondaryButton(
+                  text = "Cancelar descarga",
+                  onClick = viewModel::cancelDownload,
+                )
+              } else if (state.downloadedApkFile == null) {
                 LargePrimaryButton(
                   text = "Descargar APK y verificar SHA-256",
                   icon = Icons.Rounded.CloudDownload,
@@ -405,6 +410,22 @@ fun UpdatesScreen(
         }
 
         is UpdateCheckResult.IncompatibleUpdate, null -> Unit
+      }
+
+      item {
+        SectionCard {
+          Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.Security, contentDescription = null, tint = WhatsAppGreen)
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Distribución transparente y segura", style = MaterialTheme.typography.titleMedium, color = TextPrimary)
+          }
+          Spacer(modifier = Modifier.height(6.dp))
+          Text(
+            text = "Este cliente nunca almacena tokens privados de GitHub. Si el código fuente está en un repositorio privado, publica los APK firmados y su archivo .sha256 en un repositorio público de Releases o actualiza mediante instalación manual verificada.",
+            style = MaterialTheme.typography.bodySmall,
+            color = TextSecondary,
+          )
+        }
       }
     }
   }

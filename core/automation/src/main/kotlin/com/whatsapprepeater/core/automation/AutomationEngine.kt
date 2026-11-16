@@ -13,13 +13,17 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Motor principal de automatización.
@@ -41,6 +45,8 @@ class AutomationEngine(
   val state: StateFlow<AutomationState> = _state.asStateFlow()
 
   private val pauseRequested = MutableStateFlow(false)
+  @Volatile
+  private var stopRequested = false
   private var activeJob: Job? = null
   private var lastStatusBeforePause: AutomationStatus = AutomationStatus.WAITING_INTERVAL
 
@@ -100,6 +106,7 @@ class AutomationEngine(
     val rangeText = "${config.intervalRange.minSeconds}s - ${config.intervalRange.maxSeconds}s"
 
     pauseRequested.value = false
+    stopRequested = false
     _state.value = AutomationState(
       status = AutomationStatus.OPENING_WHATSAPP,
       contact = config.contact,
@@ -146,6 +153,7 @@ class AutomationEngine(
 
   fun stop() {
     pauseRequested.value = false
+    stopRequested = true
     val current = _state.value
     if (activeJob?.isActive == true) {
       activeJob?.cancel(CancellationException("Detención de emergencia activada por el usuario"))
@@ -198,6 +206,7 @@ class AutomationEngine(
         driver.openWhatsAppHome(config.targetPackage)
       }
       delayProvider(1_500L)
+      ensureNotStopped()
 
       val reachedConversation = ensureConversationOpened(config)
       if (!reachedConversation) {
@@ -209,6 +218,7 @@ class AutomationEngine(
 
       // Pasos 9-14: Iterar sobre la cola secuencial de mensajes.
       while (!queueManager.isFinished) {
+        ensureNotStopped()
         waitWhilePaused()
 
         val message = queueManager.currentMessage() ?: break
@@ -295,6 +305,7 @@ class AutomationEngine(
         }
 
         waitWhilePaused()
+        ensureNotStopped()
 
         // Paso 11: Enviar mensaje y verificar razonablemente que la caja de texto se vació.
         updateStatus(
@@ -356,6 +367,7 @@ class AutomationEngine(
 
         // Paso 12-13: Esperar intervalo aleatorio si quedan mensajes pendientes.
         if (!queueManager.isFinished) {
+          ensureNotStopped()
           val waitSeconds = intervalGenerator.nextIntervalSeconds(config.intervalRange)
           intervalSamples.add(waitSeconds)
           waitIntervalWithCountdown(waitSeconds)
@@ -411,23 +423,27 @@ class AutomationEngine(
       val avgInterval = if (intervalSamples.isNotEmpty()) intervalSamples.average() else 0.0
       val snapshotState = _state.value
 
-      onExecutionFinished(
-        ExecutionRecord(
-          batchCode = batchId,
-          timestampMillis = nowEnd,
-          contactName = config.contact.name,
-          contactPhone = config.contact.phoneNumber,
-          scheduledCount = queueManager.totalCount,
-          confirmedCount = queueManager.sentCount,
-          errorCount = errorCount.coerceAtLeast(snapshotState.errorCount),
-          finalStatus = finalStatus,
-          statusDetail = finalDetail,
-          durationMillis = duration,
-          averageIntervalSeconds = avgInterval,
-          modeLabel = modeLabel,
-          messageTraces = traces.sortedBy { it.index },
-        ),
-      )
+      driver.clearNodeCache()
+
+      withContext(NonCancellable) {
+        onExecutionFinished(
+          ExecutionRecord(
+            batchCode = batchId,
+            timestampMillis = nowEnd,
+            contactName = config.contact.name,
+            contactPhone = config.contact.phoneNumber,
+            scheduledCount = queueManager.totalCount,
+            confirmedCount = queueManager.sentCount,
+            errorCount = errorCount.coerceAtLeast(snapshotState.errorCount),
+            finalStatus = finalStatus,
+            statusDetail = finalDetail,
+            durationMillis = duration,
+            averageIntervalSeconds = avgInterval,
+            modeLabel = modeLabel,
+            messageTraces = traces.sortedBy { it.index },
+          ),
+        )
+      }
     }
   }
 
@@ -464,6 +480,7 @@ class AutomationEngine(
 
     var searchAttempted = false
     repeat(14) {
+      ensureNotStopped()
       waitWhilePaused()
       val screen = navigator.inspectScreen(driver.captureScreenSnapshot())
       when (screen) {
@@ -555,6 +572,7 @@ class AutomationEngine(
     expectedText: String,
   ): WhatsAppScreen.OpenConversation? {
     repeat(6) {
+      ensureNotStopped()
       waitWhilePaused()
       val screen = navigator.inspectScreen(driver.captureScreenSnapshot())
       if (screen is WhatsAppScreen.UnexpectedOrError &&
@@ -577,6 +595,7 @@ class AutomationEngine(
 
   private suspend fun waitIntervalWithCountdown(totalSeconds: Int) {
     for (remaining in totalSeconds downTo 1) {
+      ensureNotStopped()
       waitWhilePaused()
       _state.update {
         it.copy(
@@ -586,14 +605,23 @@ class AutomationEngine(
         )
       }
       delayProvider(1_000L)
+      ensureNotStopped()
     }
     _state.update { it.copy(remainingIntervalSeconds = 0) }
   }
 
   private suspend fun waitWhilePaused() {
     while (pauseRequested.value) {
+      ensureNotStopped()
       delayProvider(250L)
     }
+  }
+
+  private suspend fun ensureNotStopped() {
+    if (stopRequested) {
+      throw CancellationException("Detención de emergencia activada por el usuario")
+    }
+    currentCoroutineContext().ensureActive()
   }
 
   private fun updateStatus(

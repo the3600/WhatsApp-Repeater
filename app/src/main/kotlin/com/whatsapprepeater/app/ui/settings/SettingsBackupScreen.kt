@@ -60,6 +60,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -316,7 +317,8 @@ fun SettingsBackupScreen(
               note = if (state.updateCacheBytes == 0L) "Limpio" else "Toca para limpiar",
               modifier = Modifier
                 .weight(1f)
-                .clickable { viewModel.clearUpdateCache(context) },
+                .clip(RoundedCornerShape(14.dp))
+                .clickable(role = Role.Button) { viewModel.clearUpdateCache(context) },
             )
           }
           Spacer(modifier = Modifier.height(12.dp))

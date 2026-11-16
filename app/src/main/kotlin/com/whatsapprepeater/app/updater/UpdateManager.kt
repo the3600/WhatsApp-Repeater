@@ -14,7 +14,10 @@ import com.whatsapprepeater.core.updater.RemoteReleaseCandidate
 import com.whatsapprepeater.core.updater.Sha256Verifier
 import com.whatsapprepeater.core.updater.UpdateCheckResult
 import com.whatsapprepeater.core.updater.UpdateCompatibilityChecker
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
@@ -137,6 +140,7 @@ class UpdateManager(
           var bytesRead = input.read(buffer)
           var lastEmitBytes = 0L
           while (bytesRead >= 0) {
+            currentCoroutineContext().ensureActive()
             output.write(buffer, 0, bytesRead)
             downloaded += bytesRead
             if (downloaded - lastEmitBytes >= 64 * 1024 || downloaded == totalBytes) {
@@ -149,9 +153,24 @@ class UpdateManager(
         }
       }
 
-      // 1. Verificar integridad criptográfica SHA-256
+      if (totalBytes > 0 && downloaded < totalBytes) {
+        targetFile.delete()
+        emit(ApkDownloadEvent.Failed("Descarga incompleta ($downloaded de $totalBytes bytes). Intenta de nuevo."))
+        return@flow
+      }
+
+      // 1. Verificar integridad criptográfica SHA-256 (obligatoria)
+      if (expectedSha256.isNullOrBlank()) {
+        targetFile.delete()
+        emit(
+          ApkDownloadEvent.Failed(
+            "La publicación no incluye un hash SHA-256 verificable. Descarga cancelada por seguridad.",
+          ),
+        )
+        return@flow
+      }
       val actualSha = Sha256Verifier.computeSha256(targetFile)
-      if (!expectedSha256.isNullOrBlank() && !Sha256Verifier.verifyHexMatch(actualSha, expectedSha256)) {
+      if (!Sha256Verifier.verifyHexMatch(actualSha, expectedSha256)) {
         targetFile.delete()
         emit(
           ApkDownloadEvent.Failed(
@@ -170,6 +189,9 @@ class UpdateManager(
       }
 
       emit(ApkDownloadEvent.VerifiedReady(targetFile, actualSha))
+    } catch (c: CancellationException) {
+      targetFile.delete()
+      throw c
     } catch (e: Exception) {
       targetFile.delete()
       emit(ApkDownloadEvent.Failed(e.message ?: "Error al descargar o verificar el APK."))

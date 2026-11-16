@@ -45,6 +45,17 @@ fun MainNavigation(container: AppContainer) {
     backStack.add(root)
   }
 
+  fun navigateBackToOrAdd(target: NavKey) {
+    val existingIndex = backStack.indexOfLast { it == target }
+    if (existingIndex >= 0) {
+      while (backStack.size - 1 > existingIndex) {
+        backStack.removeLastOrNull()
+      }
+    } else {
+      backStack.add(target)
+    }
+  }
+
   fun navigateByBottomTab(tab: BottomTab) {
     when (tab) {
       BottomTab.HOME -> resetToRoot(HomeRoute)
@@ -140,7 +151,7 @@ fun MainNavigation(container: AppContainer) {
         ConfirmationScreen(
           viewModel = vm,
           onBack = { backStack.removeLastOrNull() },
-          onModifyParameters = { backStack.add(ContactPickerRoute) },
+          onModifyParameters = { navigateBackToOrAdd(ContactPickerRoute) },
           onOpenPermissions = { backStack.add(PermissionsRoute) },
           onStartConfirmed = { backStack.add(AutomationRoute) },
         )

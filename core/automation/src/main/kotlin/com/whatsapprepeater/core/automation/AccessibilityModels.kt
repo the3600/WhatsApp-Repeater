@@ -98,5 +98,7 @@ interface AccessibilityDriver {
   fun setText(nodeId: String, text: String): Boolean
 
   fun navigateBack(): Boolean
+
+  fun clearNodeCache() {}
 }
 

@@ -7,6 +7,7 @@ import com.whatsapprepeater.core.model.ExecutionFinalStatus
 import com.whatsapprepeater.core.model.ExecutionRecord
 import com.whatsapprepeater.core.model.IntervalRange
 import com.whatsapprepeater.core.model.MessageMode
+import com.whatsapprepeater.core.model.MessageTraceStatus
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -27,22 +28,36 @@ class AutomationEngineTest {
   ) : AccessibilityDriver {
     override val isServiceConnected: StateFlow<Boolean> = MutableStateFlow(true)
     var headerText: String = initialHeader
+    var foregroundPackage: String = AutomationConfig.WHATSAPP_PACKAGE
     var typedText: String = ""
     val sentMessages = mutableListOf<String>()
     var forceCaptcha = false
+    var clearInputOnSend = true
+    var onAfterFirstSend: (() -> Unit)? = null
 
     override fun openWhatsAppChat(contact: ContactInfo, targetPackage: String): Boolean = true
     override fun openWhatsAppHome(targetPackage: String): Boolean = true
 
     override fun captureScreenSnapshot(): ScreenSnapshot {
+      if (foregroundPackage != AutomationConfig.WHATSAPP_PACKAGE &&
+        foregroundPackage != AutomationConfig.WHATSAPP_BUSINESS_PACKAGE
+      ) {
+        return ScreenSnapshot(
+          foregroundPackage = foregroundPackage,
+          screenWidth = 1080,
+          screenHeight = 1920,
+          root = UiNodeSnapshot(nodeId = "other_root", packageName = foregroundPackage),
+        )
+      }
+
       if (forceCaptcha) {
         return ScreenSnapshot(
-          foregroundPackage = AutomationConfig.WHATSAPP_PACKAGE,
+          foregroundPackage = foregroundPackage,
           screenWidth = 1080,
           screenHeight = 1920,
           root = UiNodeSnapshot(
             nodeId = "root",
-            packageName = AutomationConfig.WHATSAPP_PACKAGE,
+            packageName = foregroundPackage,
             children = listOf(
               UiNodeSnapshot(
                 nodeId = "captcha",
@@ -83,12 +98,12 @@ class AutomationEngineTest {
       }
 
       return ScreenSnapshot(
-        foregroundPackage = AutomationConfig.WHATSAPP_PACKAGE,
+        foregroundPackage = foregroundPackage,
         screenWidth = 1080,
         screenHeight = 1920,
         root = UiNodeSnapshot(
           nodeId = "root",
-          packageName = AutomationConfig.WHATSAPP_PACKAGE,
+          packageName = foregroundPackage,
           children = children,
         ),
       )
@@ -96,8 +111,13 @@ class AutomationEngineTest {
 
     override fun clickNode(nodeId: String): Boolean {
       if (nodeId == "send" && typedText.isNotEmpty()) {
-        sentMessages.add(typedText)
-        typedText = ""
+        if (clearInputOnSend) {
+          sentMessages.add(typedText)
+          typedText = ""
+          if (sentMessages.size == 1) {
+            onAfterFirstSend?.invoke()
+          }
+        }
         return true
       }
       return false
@@ -117,7 +137,7 @@ class AutomationEngineTest {
   private val contact = ContactInfo(id = "1", name = "Ana Gómez", phoneNumber = "+57 310 555 0000")
 
   @Test
-  fun `completes full automation flow and logs execution record`() = runTest {
+  fun `completes full automation flow and logs execution record with confirmed traces`() = runTest {
     val dispatcher = StandardTestDispatcher(testScheduler)
     val driver = FakeAccessibilityDriver()
     val records = mutableListOf<ExecutionRecord>()
@@ -125,7 +145,7 @@ class AutomationEngineTest {
       driver = driver,
       intervalGenerator = RandomIntervalGenerator(Random(7)),
       onExecutionFinished = { records.add(it) },
-      delayProvider = { /* sin espera real en test */ },
+      delayProvider = { },
       scope = TestScope(dispatcher),
     )
 
@@ -145,6 +165,7 @@ class AutomationEngineTest {
     assertEquals(0, engine.state.value.pendingCount)
     assertEquals(1, records.size)
     assertEquals(ExecutionFinalStatus.COMPLETED, records.first().finalStatus)
+    assertTrue(records.first().messageTraces.all { it.status == MessageTraceStatus.CONFIRMED })
   }
 
   @Test
@@ -218,5 +239,96 @@ class AutomationEngineTest {
     assertEquals(AutomationStatus.ERROR, engine.state.value.status)
     assertEquals(ExecutionFinalStatus.FAILED_SAFETY_CHECK, records.first().finalStatus)
   }
-}
 
+  @Test
+  fun `aborts safely if input box does not clear after clicking send`() = runTest {
+    val dispatcher = StandardTestDispatcher(testScheduler)
+    val driver = FakeAccessibilityDriver().apply { clearInputOnSend = false }
+    val records = mutableListOf<ExecutionRecord>()
+    val engine = AutomationEngine(
+      driver = driver,
+      onExecutionFinished = { records.add(it) },
+      delayProvider = { },
+      scope = TestScope(dispatcher),
+    )
+
+    engine.start(
+      AutomationConfig(
+        contact = contact,
+        mode = MessageMode.RepeatSingleMessage("Hola", 2),
+        intervalRange = IntervalRange(10, 15),
+        userConfirmed = true,
+      ),
+    )
+    dispatcher.scheduler.advanceUntilIdle()
+
+    assertEquals(0, engine.state.value.sentConfirmed)
+    assertEquals(AutomationStatus.ERROR, engine.state.value.status)
+    assertEquals(ExecutionFinalStatus.FAILED_SAFETY_CHECK, records.first().finalStatus)
+    assertEquals(MessageTraceStatus.FAILED, records.first().messageTraces.first().status)
+  }
+
+  @Test
+  fun `emergency stop after first message purges remaining queue as cancelled`() = runTest {
+    val dispatcher = StandardTestDispatcher(testScheduler)
+    val driver = FakeAccessibilityDriver()
+    val records = mutableListOf<ExecutionRecord>()
+    lateinit var engine: AutomationEngine
+    engine = AutomationEngine(
+      driver = driver,
+      onExecutionFinished = { records.add(it) },
+      delayProvider = { },
+      scope = TestScope(dispatcher),
+    )
+    driver.onAfterFirstSend = { engine.stop() }
+
+    engine.start(
+      AutomationConfig(
+        contact = contact,
+        mode = MessageMode.MultipleMessages(listOf("Uno", "Dos", "Tres")),
+        intervalRange = IntervalRange(10, 15),
+        userConfirmed = true,
+      ),
+    )
+    dispatcher.scheduler.advanceUntilIdle()
+
+    assertEquals(listOf("Uno"), driver.sentMessages)
+    assertEquals(AutomationStatus.STOPPED, engine.state.value.status)
+    assertEquals(1, records.size)
+    val rec = records.first()
+    assertEquals(ExecutionFinalStatus.STOPPED_BY_USER, rec.finalStatus)
+    assertEquals(1, rec.confirmedCount)
+    assertEquals(2, rec.cancelledCount)
+    assertEquals(MessageTraceStatus.CONFIRMED, rec.messageTraces[0].status)
+    assertEquals(MessageTraceStatus.CANCELLED, rec.messageTraces[1].status)
+    assertEquals(MessageTraceStatus.CANCELLED, rec.messageTraces[2].status)
+  }
+
+  @Test
+  fun `aborts when foreground switches to an external app before next message`() = runTest {
+    val dispatcher = StandardTestDispatcher(testScheduler)
+    val driver = FakeAccessibilityDriver()
+    val records = mutableListOf<ExecutionRecord>()
+    val engine = AutomationEngine(
+      driver = driver,
+      onExecutionFinished = { records.add(it) },
+      delayProvider = { },
+      scope = TestScope(dispatcher),
+    )
+    driver.onAfterFirstSend = { driver.foregroundPackage = "com.android.settings" }
+
+    engine.start(
+      AutomationConfig(
+        contact = contact,
+        mode = MessageMode.RepeatSingleMessage("Hola", 2),
+        intervalRange = IntervalRange(10, 15),
+        userConfirmed = true,
+      ),
+    )
+    dispatcher.scheduler.advanceUntilIdle()
+
+    assertEquals(listOf("Hola"), driver.sentMessages)
+    assertEquals(AutomationStatus.ERROR, engine.state.value.status)
+    assertEquals(ExecutionFinalStatus.FAILED_SAFETY_CHECK, records.first().finalStatus)
+  }
+}

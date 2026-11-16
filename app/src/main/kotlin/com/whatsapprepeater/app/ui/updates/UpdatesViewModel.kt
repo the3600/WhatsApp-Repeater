@@ -8,6 +8,8 @@ import com.whatsapprepeater.app.updater.ApkDownloadEvent
 import com.whatsapprepeater.core.updater.InstalledAppInfo
 import com.whatsapprepeater.core.updater.RemoteReleaseCandidate
 import com.whatsapprepeater.core.updater.UpdateCheckResult
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -47,6 +49,7 @@ class UpdatesViewModel(
   private val verifiedSha256 = MutableStateFlow<String?>(null)
   private val downloadError = MutableStateFlow<String?>(null)
   private val incompatibilityAlert = MutableStateFlow<String?>(null)
+  private var downloadJob: Job? = null
 
   val uiState: StateFlow<UpdatesUiState> = combine(
     container.settingsRepository.settings,
@@ -125,7 +128,7 @@ class UpdatesViewModel(
 
   fun downloadUpdate(candidate: RemoteReleaseCandidate, expectedSha256: String?) {
     if (isDownloading.value) return
-    viewModelScope.launch {
+    downloadJob = viewModelScope.launch {
       isDownloading.value = true
       downloadProgress.value = 0f
       downloadError.value = null
@@ -133,28 +136,39 @@ class UpdatesViewModel(
       downloadedApkFile.value = null
       verifiedSha256.value = null
 
-      container.updateManager.downloadAndVerifyApk(candidate, expectedSha256).collect { event ->
-        when (event) {
-          is ApkDownloadEvent.Progress -> {
-            downloadProgress.value = event.fraction
-          }
-          is ApkDownloadEvent.VerifiedReady -> {
-            downloadProgress.value = 1f
-            downloadedApkFile.value = event.apkFile
-            verifiedSha256.value = event.actualSha256
-            isDownloading.value = false
-          }
-          is ApkDownloadEvent.Incompatible -> {
-            incompatibilityAlert.value = event.reason
-            isDownloading.value = false
-          }
-          is ApkDownloadEvent.Failed -> {
-            downloadError.value = event.reason
-            isDownloading.value = false
+      try {
+        container.updateManager.downloadAndVerifyApk(candidate, expectedSha256).collect { event ->
+          when (event) {
+            is ApkDownloadEvent.Progress -> {
+              downloadProgress.value = event.fraction
+            }
+            is ApkDownloadEvent.VerifiedReady -> {
+              downloadProgress.value = 1f
+              downloadedApkFile.value = event.apkFile
+              verifiedSha256.value = event.actualSha256
+              isDownloading.value = false
+            }
+            is ApkDownloadEvent.Incompatible -> {
+              incompatibilityAlert.value = event.reason
+              isDownloading.value = false
+            }
+            is ApkDownloadEvent.Failed -> {
+              downloadError.value = event.reason
+              isDownloading.value = false
+            }
           }
         }
+      } catch (_: CancellationException) {
+        isDownloading.value = false
+        downloadProgress.value = 0f
+        downloadError.value = "Descarga cancelada por el usuario."
       }
     }
+  }
+
+  fun cancelDownload() {
+    downloadJob?.cancel()
+    downloadJob = null
   }
 
   fun launchInstaller(): Boolean {

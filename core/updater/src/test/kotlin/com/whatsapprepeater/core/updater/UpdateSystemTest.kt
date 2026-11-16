@@ -118,5 +118,40 @@ class UpdateSystemTest {
     )
     assertTrue(UpdateCompatibilityChecker.evaluate(installed, sameVersion, null) is UpdateCheckResult.UpToDate)
   }
+
+  @Test
+  fun `validates downloaded apk metadata against installed package version and signature`() {
+    val ok = UpdateCompatibilityChecker.validateDownloadedApkMetadata(
+      installed = installed,
+      apkPackageName = "com.whatsapprepeater.android",
+      apkVersionCode = 2L,
+      apkSigningCertSha256 = installed.signingCertSha256,
+    )
+    assertEquals(null, ok)
+
+    val wrongPkg = UpdateCompatibilityChecker.validateDownloadedApkMetadata(
+      installed = installed,
+      apkPackageName = "com.fake.app",
+      apkVersionCode = 2L,
+      apkSigningCertSha256 = installed.signingCertSha256,
+    )
+    assertTrue(wrongPkg!!.contains("com.whatsapprepeater.android"))
+
+    val downgrade = UpdateCompatibilityChecker.validateDownloadedApkMetadata(
+      installed = installed,
+      apkPackageName = "com.whatsapprepeater.android",
+      apkVersionCode = 1L,
+      apkSigningCertSha256 = installed.signingCertSha256,
+    )
+    assertTrue(downgrade!!.contains("versionCode"))
+
+    val wrongSig = UpdateCompatibilityChecker.validateDownloadedApkMetadata(
+      installed = installed,
+      apkPackageName = "com.whatsapprepeater.android",
+      apkVersionCode = 2L,
+      apkSigningCertSha256 = "f".repeat(64),
+    )
+    assertTrue(wrongSig!!.contains("firma"))
+  }
 }
 

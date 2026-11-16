@@ -212,26 +212,38 @@ object LocalBackupManager {
   fun importEncryptedJson(rawEnvelopeJson: String, passphrase: String): BackupPayload {
     require(passphrase.length >= 4) { "Ingresa la clave usada para cifrar el respaldo." }
 
-    val envelope = json.decodeFromString<EncryptedBackupEnvelope>(rawEnvelopeJson)
+    val envelope = try {
+      json.decodeFromString<EncryptedBackupEnvelope>(rawEnvelopeJson)
+    } catch (_: Exception) {
+      throw IllegalArgumentException("El archivo seleccionado no tiene un formato de respaldo válido.")
+    }
     require(envelope.format == "whatsapp-repeater-backup-v1") {
       "El archivo seleccionado no corresponde a un respaldo de WhatsApp Repeater."
     }
 
-    val salt = Base64.getDecoder().decode(envelope.saltBase64)
-    val iv = Base64.getDecoder().decode(envelope.ivBase64)
-    val cipherBytes = Base64.getDecoder().decode(envelope.cipherTextBase64)
-    val secretKey = deriveAesKey(passphrase, salt)
+    val plainBytes = try {
+      val salt = Base64.getDecoder().decode(envelope.saltBase64)
+      val iv = Base64.getDecoder().decode(envelope.ivBase64)
+      val cipherBytes = Base64.getDecoder().decode(envelope.cipherTextBase64)
+      val secretKey = deriveAesKey(passphrase, salt)
 
-    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-    cipher.init(Cipher.DECRYPT_MODE, secretKey, GCMParameterSpec(GCM_TAG_BITS, iv))
-    val plainBytes = cipher.doFinal(cipherBytes)
+      val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+      cipher.init(Cipher.DECRYPT_MODE, secretKey, GCMParameterSpec(GCM_TAG_BITS, iv))
+      cipher.doFinal(cipherBytes)
+    } catch (_: Exception) {
+      throw IllegalArgumentException("Clave incorrecta o archivo de respaldo dañado/alterado.")
+    }
 
     val actualSha = sha256Hex(plainBytes)
     require(actualSha.equals(envelope.payloadSha256, ignoreCase = true)) {
       "El respaldo falló la verificación de integridad SHA-256."
     }
 
-    return json.decodeFromString<BackupPayload>(plainBytes.toString(Charsets.UTF_8))
+    return try {
+      json.decodeFromString<BackupPayload>(plainBytes.toString(Charsets.UTF_8))
+    } catch (_: Exception) {
+      throw IllegalArgumentException("El contenido del respaldo está dañado y no pudo leerse.")
+    }
   }
 
   fun toHistoryRecords(items: List<BackupHistoryDto>): List<ExecutionRecord> =

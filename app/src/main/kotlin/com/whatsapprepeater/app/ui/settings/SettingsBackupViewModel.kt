@@ -167,18 +167,27 @@ class SettingsBackupViewModel(
           payload.settings.githubRepoName,
         )
 
-        // Restaurar listas guardadas
+        // Restaurar listas guardadas sin duplicar existentes
+        val existingListKeys = container.savedConfigRepository
+          .observeSavedMessageLists()
+          .first()
+          .map { "${it.title}_${it.updatedAtMillis}" }
+          .toSet()
+
         payload.savedLists.forEach { dto ->
-          container.savedConfigRepository.saveMessageList(
-            SavedMessageList(
-              title = dto.title,
-              isMultipleMode = dto.isMultipleMode,
-              messages = dto.messages,
-              singleMessage = dto.singleMessage,
-              repeatCount = dto.repeatCount,
-              updatedAtMillis = dto.updatedAtMillis,
-            ),
-          )
+          val key = "${dto.title}_${dto.updatedAtMillis}"
+          if (key !in existingListKeys) {
+            container.savedConfigRepository.saveMessageList(
+              SavedMessageList(
+                title = dto.title,
+                isMultipleMode = dto.isMultipleMode,
+                messages = dto.messages,
+                singleMessage = dto.singleMessage,
+                repeatCount = dto.repeatCount,
+                updatedAtMillis = dto.updatedAtMillis,
+              ),
+            )
+          }
         }
 
         // Restaurar borrador activo si existe
@@ -200,9 +209,17 @@ class SettingsBackupViewModel(
           container.updateDraft { AutomationDraft.fromPersisted(persisted) }
         }
 
-        // Restaurar registros de historial
+        // Restaurar registros de historial evitando duplicados exactos
+        val existingHistoryKeys = container.historyRepository
+          .getAllExecutionsOnce()
+          .map { "${it.timestampMillis}_${it.contactPhone}_${it.batchCode}" }
+          .toSet()
+
         LocalBackupManager.toHistoryRecords(payload.history).forEach { record ->
-          container.historyRepository.recordExecution(record)
+          val key = "${record.timestampMillis}_${record.contactPhone}_${record.batchCode}"
+          if (key !in existingHistoryKeys) {
+            container.historyRepository.recordExecution(record)
+          }
         }
 
         refreshStorageStats(context)

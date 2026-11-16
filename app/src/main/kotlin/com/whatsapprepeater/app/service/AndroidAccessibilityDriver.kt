@@ -186,6 +186,10 @@ class AndroidAccessibilityDriver(
     return service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
   }
 
+  override fun clearNodeCache() {
+    activeNodes = emptyMap()
+  }
+
   fun isWhatsAppInstalled(): Boolean =
     isPackageInstalled(AutomationConfig.WHATSAPP_PACKAGE) ||
       isPackageInstalled(AutomationConfig.WHATSAPP_BUSINESS_PACKAGE)

@@ -140,4 +140,29 @@ class DatabaseMigrationTest {
     assertEquals(1, restored.history.size)
     assertEquals("WR-10001", restored.history.first().batchCode)
   }
+
+  @Test(expected = IllegalArgumentException::class)
+  fun `rejects wrong passphrase when restoring encrypted backup`() {
+    val encrypted = LocalBackupManager.exportEncryptedJson(
+      passphrase = "clave-correcta",
+      settings = AppSettings(),
+      savedLists = emptyList(),
+      activeDraft = null,
+      history = emptyList(),
+    )
+    LocalBackupManager.importEncryptedJson(encrypted, "clave-equivocada")
+  }
+
+  @Test(expected = IllegalArgumentException::class)
+  fun `rejects corrupted or tampered backup payload`() {
+    val encrypted = LocalBackupManager.exportEncryptedJson(
+      passphrase = "clave-correcta",
+      settings = AppSettings(),
+      savedLists = emptyList(),
+      activeDraft = null,
+      history = emptyList(),
+    )
+    val tampered = encrypted.replaceFirst("\"payloadSha256\": \"", "\"payloadSha256\": \"0")
+    LocalBackupManager.importEncryptedJson(tampered, "clave-correcta")
+  }
 }

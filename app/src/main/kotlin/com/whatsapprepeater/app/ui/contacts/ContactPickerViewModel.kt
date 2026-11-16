@@ -5,10 +5,12 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.whatsapprepeater.app.AppContainer
 import com.whatsapprepeater.core.model.ContactInfo
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -104,11 +106,12 @@ class ContactPickerViewModel(
       manualValidationError = manualErr,
       loadError = error,
     )
-  }.stateIn(
-    scope = viewModelScope,
-    started = SharingStarted.WhileSubscribed(5_000),
-    initialValue = ContactPickerUiState(),
-  )
+  }.flowOn(Dispatchers.Default)
+    .stateIn(
+      scope = viewModelScope,
+      started = SharingStarted.WhileSubscribed(5_000),
+      initialValue = ContactPickerUiState(),
+    )
 
   fun onPermissionStateChanged(granted: Boolean) {
     permissionGranted.value = granted
