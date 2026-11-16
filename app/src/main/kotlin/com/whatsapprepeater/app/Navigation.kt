@@ -153,7 +153,11 @@ fun MainNavigation(container: AppContainer) {
           onBack = { backStack.removeLastOrNull() },
           onModifyParameters = { navigateBackToOrAdd(ContactPickerRoute) },
           onOpenPermissions = { backStack.add(PermissionsRoute) },
-          onStartConfirmed = { backStack.add(AutomationRoute) },
+          onStartConfirmed = {
+            if (backStack.lastOrNull() != AutomationRoute) {
+              backStack.add(AutomationRoute)
+            }
+          },
         )
       }
 

@@ -162,6 +162,7 @@ class AutomationEngine(
           status = AutomationStatus.STOPPED,
           remainingIntervalSeconds = 0,
           statusDetail = "Detenido manualmente por el usuario.",
+          finishedAtMillis = clockMillis(),
         )
       }
     } else if (current.isPaused || current.isRunning) {
@@ -170,6 +171,7 @@ class AutomationEngine(
           status = AutomationStatus.STOPPED,
           remainingIntervalSeconds = 0,
           statusDetail = "Detenido manualmente por el usuario.",
+          finishedAtMillis = clockMillis(),
         )
       }
     }
@@ -375,12 +377,14 @@ class AutomationEngine(
       }
 
       // Paso 14: Finalizar con éxito.
+      val completedAt = clockMillis()
       _state.update {
         it.copy(
           status = AutomationStatus.COMPLETED,
           remainingIntervalSeconds = 0,
           statusDetail = "Completado: ${queueManager.sentCount} de ${queueManager.totalCount} mensajes confirmados.",
           errorMessage = null,
+          finishedAtMillis = completedAt,
         )
       }
       finalStatus = ExecutionFinalStatus.COMPLETED
@@ -393,6 +397,7 @@ class AutomationEngine(
           status = AutomationStatus.STOPPED,
           remainingIntervalSeconds = 0,
           statusDetail = "Detenido manualmente por el usuario.",
+          finishedAtMillis = clockMillis(),
         )
       }
       throw c
@@ -646,6 +651,7 @@ class AutomationEngine(
         remainingIntervalSeconds = 0,
         statusDetail = "Detenido por seguridad / error",
         errorMessage = message,
+        finishedAtMillis = clockMillis(),
       )
     }
   }

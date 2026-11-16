@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -95,11 +96,16 @@ fun MessageEditorScreen(
     viewModel.setMultipleMode(true)
   }
 
+  val multipleSavedLists = remember(state.savedLists) {
+    state.savedLists.filter { it.isMultipleMode }
+  }
+
   Column(
     modifier = Modifier
       .fillMaxSize()
       .background(BackgroundBlack)
-      .navigationBarsPadding(),
+      .navigationBarsPadding()
+      .imePadding(),
   ) {
     WizardStepHeader(
       title = "Lista de Mensajes",
@@ -119,7 +125,7 @@ fun MessageEditorScreen(
       item {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
           SmallActionChip(
-            text = "Listas guardadas (${state.savedLists.size})",
+            text = "Listas guardadas (${multipleSavedLists.size})",
             icon = Icons.Rounded.Bookmarks,
             highlighted = false,
             onClick = { showSavedListsDialog = true },
@@ -428,6 +434,7 @@ fun MessageEditorScreen(
       },
       confirmButton = {
         TextButton(
+          enabled = templateTitleInput.isNotBlank(),
           onClick = {
             if (templateTitleInput.isNotBlank()) {
               viewModel.saveCurrentAsTemplate(templateTitleInput)
@@ -435,7 +442,7 @@ fun MessageEditorScreen(
             }
           },
         ) {
-          Text("Guardar", color = WhatsAppGreen, fontWeight = FontWeight.Bold)
+          Text("Guardar", color = if (templateTitleInput.isNotBlank()) WhatsAppGreen else TextSecondary, fontWeight = FontWeight.Bold)
         }
       },
       dismissButton = {
@@ -453,11 +460,11 @@ fun MessageEditorScreen(
       titleContentColor = TextPrimary,
       title = { Text("Listas guardadas") },
       text = {
-        if (state.savedLists.isEmpty()) {
-          Text("Aún no tienes listas guardadas.", color = TextSecondary)
+        if (multipleSavedLists.isEmpty()) {
+          Text("Aún no tienes listas múltiples guardadas.", color = TextSecondary)
         } else {
           Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            state.savedLists.forEach { saved ->
+            multipleSavedLists.forEach { saved ->
               Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier

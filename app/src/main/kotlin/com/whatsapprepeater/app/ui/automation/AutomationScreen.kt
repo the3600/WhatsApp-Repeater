@@ -497,7 +497,8 @@ private fun CompletedAutomationContent(
 ) {
   val engine = state.engineState
   val contact = engine.contact ?: state.draft.selectedContact
-  val elapsedSec = ((System.currentTimeMillis() - engine.startedAtMillis).coerceAtLeast(1000L) / 1000L).toInt()
+  val endMillis = if (engine.finishedAtMillis > 0L) engine.finishedAtMillis else engine.startedAtMillis
+  val elapsedSec = ((endMillis - engine.startedAtMillis).coerceAtLeast(1000L) / 1000L).toInt()
   val effectiveness = if (engine.totalScheduled > 0) {
     (engine.sentConfirmed * 100) / engine.totalScheduled
   } else 100

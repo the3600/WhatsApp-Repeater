@@ -10,6 +10,7 @@ import com.whatsapprepeater.core.model.ExecutionFinalStatus
 import com.whatsapprepeater.core.model.ExecutionRecord
 import com.whatsapprepeater.core.model.MessageTraceStatus
 import com.whatsapprepeater.core.model.SavedMessageList
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -17,6 +18,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 enum class HistoryFilter {
   ALL,
@@ -71,17 +73,22 @@ class HistoryViewModel(
 
   fun deleteRecord(id: Long) {
     viewModelScope.launch {
-      container.historyRepository.deleteExecution(id)
+      withContext(NonCancellable) {
+        container.historyRepository.deleteExecution(id)
+      }
     }
   }
 
   fun clearAllHistory() {
     viewModelScope.launch {
-      container.historyRepository.clearHistory()
+      withContext(NonCancellable) {
+        container.historyRepository.clearHistory()
+      }
     }
   }
 
   fun prepareRetryPending(record: ExecutionRecord) {
+    container.automationEngine.resetToIdle()
     val pendingMessages = record.messageTraces
       .filter { it.status != MessageTraceStatus.CONFIRMED }
       .map { it.messagePreview }
@@ -109,16 +116,18 @@ class HistoryViewModel(
     val messages = record.messageTraces.map { it.messagePreview }.filter { it.isNotBlank() }
     if (messages.isEmpty()) return
     viewModelScope.launch {
-      container.savedConfigRepository.saveMessageList(
-        SavedMessageList(
-          title = "Lote ${record.contactName}".take(40),
-          isMultipleMode = true,
-          messages = messages,
-          singleMessage = "",
-          repeatCount = 1,
-          updatedAtMillis = System.currentTimeMillis(),
-        ),
-      )
+      withContext(NonCancellable) {
+        container.savedConfigRepository.saveMessageList(
+          SavedMessageList(
+            title = "Lote ${record.contactName}".take(40),
+            isMultipleMode = true,
+            messages = messages,
+            singleMessage = "",
+            repeatCount = 1,
+            updatedAtMillis = System.currentTimeMillis(),
+          ),
+        )
+      }
     }
   }
 

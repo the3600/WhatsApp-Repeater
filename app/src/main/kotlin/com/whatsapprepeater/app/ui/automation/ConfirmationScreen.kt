@@ -47,7 +47,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -58,6 +62,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.whatsapprepeater.app.ui.components.LargePrimaryButton
 import com.whatsapprepeater.app.ui.components.LargeSecondaryButton
@@ -87,7 +94,20 @@ fun ConfirmationScreen(
   onStartConfirmed: () -> Unit,
 ) {
   val context = LocalContext.current
+  val lifecycleOwner = LocalLifecycleOwner.current
   val state by viewModel.uiState.collectAsStateWithLifecycle()
+  var isStarting by remember { mutableStateOf(false) }
+
+  DisposableEffect(lifecycleOwner) {
+    val observer = LifecycleEventObserver { _, event ->
+      if (event == Lifecycle.Event.ON_RESUME) {
+        isStarting = false
+        viewModel.refreshSystemStatus()
+      }
+    }
+    lifecycleOwner.lifecycle.addObserver(observer)
+    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+  }
 
   val notificationLauncher = rememberLauncherForActivityResult(
     contract = ActivityResultContracts.RequestPermission(),
@@ -384,8 +404,10 @@ fun ConfirmationScreen(
       LargePrimaryButton(
         text = "Iniciar automatización",
         icon = Icons.Rounded.PlayArrow,
-        enabled = state.canStartAutomation,
+        enabled = state.canStartAutomation && !isStarting,
         onClick = {
+          if (isStarting) return@LargePrimaryButton
+          isStarting = true
           if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(
               context,

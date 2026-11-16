@@ -86,11 +86,11 @@ class AndroidAccessibilityDriver(
     for (pkg in packagesToTry) {
       val launchIntent = appContext.packageManager.getLaunchIntentForPackage(pkg) ?: continue
       launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-      return try {
+      try {
         appContext.startActivity(launchIntent)
-        true
+        return true
       } catch (_: Exception) {
-        false
+        // Intentar el siguiente paquete disponible.
       }
     }
     return false

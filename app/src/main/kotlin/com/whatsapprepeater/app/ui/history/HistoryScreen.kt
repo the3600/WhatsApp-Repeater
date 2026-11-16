@@ -358,7 +358,7 @@ private fun HistoryRecordCard(
         )
       }
       Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        if (!isSuccess && record.cancelledCount > 0) {
+        if (!isSuccess && (record.cancelledCount > 0 || record.errorCount > 0)) {
           Surface(
             shape = RoundedCornerShape(999.dp),
             color = CardSurfaceElevated,

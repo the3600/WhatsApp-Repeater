@@ -1,9 +1,12 @@
 package com.whatsapprepeater.app
 
+import com.whatsapprepeater.app.ui.automation.AutomationUiState
 import com.whatsapprepeater.app.ui.config.IntervalConfigUiState
 import com.whatsapprepeater.app.ui.contacts.ContactPickerUiState
 import com.whatsapprepeater.app.ui.messages.MessageEditorUiState
 import com.whatsapprepeater.core.model.AutomationConfig
+import com.whatsapprepeater.core.model.AutomationState
+import com.whatsapprepeater.core.model.AutomationStatus
 import com.whatsapprepeater.core.model.ContactInfo
 import com.whatsapprepeater.core.model.MessageMode
 import com.whatsapprepeater.core.model.SafetyLimits
@@ -89,5 +92,29 @@ class AutomationDraftTest {
       maxRepeatAllowed = SafetyLimits.DEFAULT_MAX_REPEAT_COUNT,
     )
     assertFalse(overLimitRepeat.canProceedRepeat)
+  }
+
+  @Test
+  fun `automation ui state enforces confirmation service connection and non running guards`() {
+    val validDraft = AutomationDraft(
+      selectedContact = ContactInfo("1", "Laura", "+573001112222"),
+      isMultipleMode = false,
+      singleMessage = "Hola",
+      repeatCount = 2,
+      minIntervalSeconds = 10,
+      maxIntervalSeconds = 20,
+    )
+
+    val ready = AutomationUiState(
+      draft = validDraft,
+      isServiceConnected = true,
+      isWhatsAppInstalled = true,
+      userCheckboxConfirmed = true,
+    )
+    assertTrue(ready.canStartAutomation)
+    assertFalse(ready.copy(userCheckboxConfirmed = false).canStartAutomation)
+    assertFalse(ready.copy(isServiceConnected = false).canStartAutomation)
+    assertFalse(ready.copy(isWhatsAppInstalled = false).canStartAutomation)
+    assertFalse(ready.copy(engineState = AutomationState(status = AutomationStatus.WRITING_MESSAGE)).canStartAutomation)
   }
 }

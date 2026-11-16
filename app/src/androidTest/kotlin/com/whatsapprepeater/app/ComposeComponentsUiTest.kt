@@ -66,5 +66,34 @@ class ComposeComponentsUiTest {
     composeRule.onNodeWithText("DETENER AHORA").performClick()
     assertTrue(confirmed)
   }
+
+  @Test
+  fun emergencyStopDialog_stoppedStage_navigatesToHistoryAndHome() {
+    var wentHistory = false
+    var wentHome = false
+    composeRule.setContent {
+      WhatsAppRepeaterTheme {
+        EmergencyStopDialog(
+          state = EmergencyStopDialogState(
+            isVisible = true,
+            stage = EmergencyStopStage.STOPPED,
+            recipient = "Ana Gómez",
+            sentCount = 1,
+            totalCount = 4,
+          ),
+          hapticEnabled = false,
+          onDismissRequest = {},
+          onConfirmEmergencyStop = {},
+          onNavigateToHistory = { wentHistory = true },
+          onReturnToHome = { wentHome = true },
+        )
+      }
+    }
+
+    composeRule.onNodeWithText("Ver en Historial").performClick()
+    composeRule.onNodeWithText("Volver al Inicio").performClick()
+    assertTrue(wentHistory)
+    assertTrue(wentHome)
+  }
 }
 

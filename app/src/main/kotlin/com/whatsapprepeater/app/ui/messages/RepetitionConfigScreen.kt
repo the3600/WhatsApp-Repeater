@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -24,8 +25,9 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.BookmarkAdd
+import androidx.compose.material.icons.rounded.Bookmarks
+import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.FormatListNumbered
-import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material3.AlertDialog
@@ -58,6 +60,7 @@ import com.whatsapprepeater.app.ui.components.WizardStepHeader
 import com.whatsapprepeater.app.ui.theme.BackgroundBlack
 import com.whatsapprepeater.app.ui.theme.CardSurface
 import com.whatsapprepeater.app.ui.theme.CardSurfaceElevated
+import com.whatsapprepeater.app.ui.theme.DangerRed
 import com.whatsapprepeater.app.ui.theme.OutlineSubtle
 import com.whatsapprepeater.app.ui.theme.TextPrimary
 import com.whatsapprepeater.app.ui.theme.TextSecondary
@@ -78,7 +81,11 @@ fun RepetitionConfigScreen(
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
   var showSaveTemplateDialog by remember { mutableStateOf(false) }
+  var showSavedTemplatesDialog by remember { mutableStateOf(false) }
   var templateTitle by remember { mutableStateOf("") }
+  val repeatTemplates = remember(state.savedLists) {
+    state.savedLists.filter { !it.isMultipleMode }
+  }
 
   LaunchedEffect(Unit) {
     viewModel.setMultipleMode(false)
@@ -88,7 +95,8 @@ fun RepetitionConfigScreen(
     modifier = Modifier
       .fillMaxSize()
       .background(BackgroundBlack)
-      .navigationBarsPadding(),
+      .navigationBarsPadding()
+      .imePadding(),
   ) {
     WizardStepHeader(
       title = "Mensaje y Repeticiones",
@@ -140,10 +148,10 @@ fun RepetitionConfigScreen(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.fillMaxWidth(),
           ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-              Icon(Icons.Rounded.Lock, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(14.dp))
-              Spacer(modifier = Modifier.width(6.dp))
-              Text("Guardado local", style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+            TextButton(onClick = { showSavedTemplatesDialog = true }) {
+              Icon(Icons.Rounded.Bookmarks, contentDescription = null, tint = WhatsAppGreen, modifier = Modifier.size(16.dp))
+              Spacer(modifier = Modifier.width(4.dp))
+              Text("Plantillas (${repeatTemplates.size})", color = WhatsAppGreen)
             }
             if (state.singleMessage.isNotBlank()) {
               TextButton(
@@ -248,10 +256,7 @@ fun RepetitionConfigScreen(
                   .weight(1f)
                   .clip(RoundedCornerShape(999.dp))
                   .clickable {
-                    if (preset > state.maxRepeatAllowed) {
-                      viewModel.updateMaxRepeatAllowed(preset)
-                    }
-                    viewModel.onRepeatCountChanged(preset)
+                    viewModel.selectRepeatPreset(preset)
                   },
               ) {
                 Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(vertical = 8.dp)) {
@@ -368,6 +373,7 @@ fun RepetitionConfigScreen(
       },
       confirmButton = {
         TextButton(
+          enabled = templateTitle.isNotBlank(),
           onClick = {
             if (templateTitle.isNotBlank()) {
               viewModel.saveCurrentAsTemplate(templateTitle)
@@ -375,12 +381,60 @@ fun RepetitionConfigScreen(
             }
           },
         ) {
-          Text("Guardar", color = WhatsAppGreen, fontWeight = FontWeight.Bold)
+          Text("Guardar", color = if (templateTitle.isNotBlank()) WhatsAppGreen else TextSecondary, fontWeight = FontWeight.Bold)
         }
       },
       dismissButton = {
         TextButton(onClick = { showSaveTemplateDialog = false }) {
           Text("Cancelar", color = TextSecondary)
+        }
+      },
+    )
+  }
+
+  if (showSavedTemplatesDialog) {
+    AlertDialog(
+      onDismissRequest = { showSavedTemplatesDialog = false },
+      containerColor = CardSurface,
+      titleContentColor = TextPrimary,
+      title = { Text("Plantillas de repetición") },
+      text = {
+        if (repeatTemplates.isEmpty()) {
+          Text("Aún no tienes plantillas de repetición guardadas.", color = TextSecondary)
+        } else {
+          Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            repeatTemplates.forEach { saved ->
+              Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .clip(RoundedCornerShape(12.dp))
+                  .background(CardSurfaceElevated)
+                  .clickable {
+                    viewModel.loadSavedTemplate(saved)
+                    showSavedTemplatesDialog = false
+                  }
+                  .padding(horizontal = 12.dp, vertical = 10.dp),
+              ) {
+                Column(modifier = Modifier.weight(1f)) {
+                  Text(saved.title, color = TextPrimary, fontWeight = FontWeight.SemiBold)
+                  Text(
+                    "Repetir ${saved.repeatCount}x",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary,
+                  )
+                }
+                IconButton(onClick = { viewModel.deleteSavedTemplate(saved.id) }) {
+                  Icon(Icons.Rounded.DeleteOutline, contentDescription = "Eliminar", tint = DangerRed)
+                }
+              }
+            }
+          }
+        }
+      },
+      confirmButton = {
+        TextButton(onClick = { showSavedTemplatesDialog = false }) {
+          Text("Cerrar", color = TextSecondary)
         }
       },
     )

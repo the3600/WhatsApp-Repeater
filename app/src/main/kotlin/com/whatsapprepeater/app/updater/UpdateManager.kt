@@ -269,7 +269,7 @@ class UpdateManager(
         )
       }
       if (code !in 200..299) {
-        val err = conn.errorStream?.bufferedReader()?.readText().orEmpty()
+        val err = conn.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
         throw IllegalStateException("GitHub API respondió HTTP $code${if (err.isNotBlank()) ": ${err.take(140)}" else ""}")
       }
       conn.inputStream.bufferedReader().use { it.readText() }

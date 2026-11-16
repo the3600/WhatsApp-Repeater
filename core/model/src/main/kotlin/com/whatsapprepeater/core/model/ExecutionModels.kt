@@ -36,6 +36,7 @@ data class AutomationState(
   val batchId: String = "",
   val activeIntervalRangeText: String = "",
   val startedAtMillis: Long = 0L,
+  val finishedAtMillis: Long = 0L,
 ) {
   val pendingCount: Int
     get() = (totalScheduled - sentConfirmed).coerceAtLeast(0)

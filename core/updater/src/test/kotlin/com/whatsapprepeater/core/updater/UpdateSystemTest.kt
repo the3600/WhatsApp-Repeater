@@ -153,5 +153,17 @@ class UpdateSystemTest {
     )
     assertTrue(wrongSig!!.contains("firma"))
   }
+
+  @Test
+  fun `ignores drafts prereleases and non https apk download urls`() {
+    val draftJson = """{"tag_name":"v1.2.0","draft":true,"assets":[{"name":"app.apk","browser_download_url":"https://example.com/app.apk"}]}"""
+    assertEquals(null, GitHubReleaseParser.parseSingleRelease(draftJson))
+
+    val insecureHttpJson = """{"tag_name":"v1.2.0","draft":false,"assets":[{"name":"app.apk","browser_download_url":"http://example.com/app.apk"}]}"""
+    assertEquals(null, GitHubReleaseParser.parseSingleRelease(insecureHttpJson))
+
+    val listWithPrereleaseOnly = """[{"tag_name":"v1.2.0-beta1","draft":false,"prerelease":true,"assets":[{"name":"app.apk","browser_download_url":"https://example.com/app.apk"}]}]"""
+    assertEquals(null, GitHubReleaseParser.parseReleaseList(listWithPrereleaseOnly))
+  }
 }
 

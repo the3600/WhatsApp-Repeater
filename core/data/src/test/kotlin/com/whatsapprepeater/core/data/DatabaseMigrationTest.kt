@@ -165,4 +165,12 @@ class DatabaseMigrationTest {
     val tampered = encrypted.replaceFirst("\"payloadSha256\": \"", "\"payloadSha256\": \"0")
     LocalBackupManager.importEncryptedJson(tampered, "clave-correcta")
   }
+
+  @Test(expected = IllegalArgumentException::class)
+  fun `rejects non json or invalid base64 backup files gracefully`() {
+    LocalBackupManager.importEncryptedJson(
+      """{"format":"whatsapp-repeater-backup-v1","algorithm":"AES-256-GCM","saltBase64":"!!!","ivBase64":"!!!","cipherTextBase64":"!!!","payloadSha256":"abc"}""",
+      "clave-correcta",
+    )
+  }
 }

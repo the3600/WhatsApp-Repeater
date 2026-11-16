@@ -294,6 +294,7 @@ class AutomationEngineTest {
 
     assertEquals(listOf("Uno"), driver.sentMessages)
     assertEquals(AutomationStatus.STOPPED, engine.state.value.status)
+    assertTrue(engine.state.value.finishedAtMillis > 0L)
     assertEquals(1, records.size)
     val rec = records.first()
     assertEquals(ExecutionFinalStatus.STOPPED_BY_USER, rec.finalStatus)

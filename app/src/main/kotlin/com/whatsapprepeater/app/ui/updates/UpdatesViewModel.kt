@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.File
@@ -98,7 +99,6 @@ class UpdatesViewModel(
 
   fun checkUpdates() {
     if (isChecking.value || isDownloading.value) return
-    val current = uiState.value
     viewModelScope.launch {
       isChecking.value = true
       checkError.value = null
@@ -107,9 +107,10 @@ class UpdatesViewModel(
       downloadedApkFile.value = null
       verifiedSha256.value = null
 
+      val settings = container.settingsRepository.settings.first()
       val result = container.updateManager.checkLatestRelease(
-        owner = current.repoOwner,
-        repo = current.repoName,
+        owner = settings.githubRepoOwner,
+        repo = settings.githubRepoName,
       )
       result.fold(
         onSuccess = { evaluated ->

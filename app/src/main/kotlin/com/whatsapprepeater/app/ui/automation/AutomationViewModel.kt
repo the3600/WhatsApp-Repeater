@@ -50,6 +50,7 @@ class AutomationViewModel(
 
   private val checkboxConfirmed = MutableStateFlow(false)
   private val emergencyDialogState = MutableStateFlow(EmergencyStopDialogState())
+  private val whatsappInstalledFlag = MutableStateFlow(container.accessibilityDriver.isWhatsAppInstalled())
 
   val uiState: StateFlow<AutomationUiState> = combine(
     container.draft,
@@ -58,13 +59,14 @@ class AutomationViewModel(
     container.accessibilityDriver.isServiceConnected,
     checkboxConfirmed,
     emergencyDialogState,
+    whatsappInstalledFlag,
   ) { values ->
     AutomationUiState(
       draft = values[0] as AutomationDraft,
       engineState = values[1] as AutomationState,
       settings = values[2] as AppSettings,
       isServiceConnected = values[3] as Boolean,
-      isWhatsAppInstalled = container.accessibilityDriver.isWhatsAppInstalled(),
+      isWhatsAppInstalled = values[6] as Boolean,
       userCheckboxConfirmed = values[4] as Boolean,
       emergencyDialog = values[5] as EmergencyStopDialogState,
     )
@@ -73,6 +75,10 @@ class AutomationViewModel(
     started = SharingStarted.WhileSubscribed(5_000),
     initialValue = AutomationUiState(),
   )
+
+  fun refreshSystemStatus() {
+    whatsappInstalledFlag.value = container.accessibilityDriver.isWhatsAppInstalled()
+  }
 
   fun setUserCheckboxConfirmed(confirmed: Boolean) {
     checkboxConfirmed.value = confirmed

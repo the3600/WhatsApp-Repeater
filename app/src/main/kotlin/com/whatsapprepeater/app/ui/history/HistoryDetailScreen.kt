@@ -30,6 +30,7 @@ import androidx.compose.material.icons.rounded.PanTool
 import androidx.compose.material.icons.rounded.Phone
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Shield
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -39,7 +40,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -82,6 +85,8 @@ fun HistoryDetailScreen(
   onResumePending: () -> Unit,
 ) {
   val record by viewModel.observeRecord(recordId).collectAsStateWithLifecycle(initialValue = null)
+  var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+  var templateSaved by remember(recordId) { mutableStateOf(false) }
 
   Column(
     modifier = Modifier
@@ -324,22 +329,50 @@ fun HistoryDetailScreen(
       }
       if (rec.messageTraces.isNotEmpty()) {
         LargeSecondaryButton(
-          text = "Crear nueva plantilla con este lote",
-          icon = Icons.Rounded.BookmarkAdd,
-          onClick = { viewModel.saveBatchAsTemplate(rec) },
+          text = if (templateSaved) "Plantilla guardada en Listas" else "Crear nueva plantilla con este lote",
+          icon = if (templateSaved) Icons.Rounded.CheckCircle else Icons.Rounded.BookmarkAdd,
+          enabled = !templateSaved,
+          onClick = {
+            viewModel.saveBatchAsTemplate(rec)
+            templateSaved = true
+          },
         )
       }
       TextButton(
-        onClick = {
-          viewModel.deleteRecord(rec.id)
-          onBack()
-        },
+        onClick = { showDeleteConfirmDialog = true },
       ) {
         Icon(Icons.Rounded.DeleteOutline, contentDescription = null, tint = DangerCoral, modifier = Modifier.size(16.dp))
         Spacer(modifier = Modifier.width(6.dp))
         Text("Eliminar este registro de auditoría", color = DangerCoral)
       }
     }
+  }
+
+  if (showDeleteConfirmDialog) {
+    AlertDialog(
+      onDismissRequest = { showDeleteConfirmDialog = false },
+      containerColor = CardSurface,
+      titleContentColor = TextPrimary,
+      textContentColor = TextSecondary,
+      title = { Text("Eliminar registro de auditoría") },
+      text = { Text("¿Deseas eliminar permanentemente este registro del historial local?") },
+      confirmButton = {
+        TextButton(
+          onClick = {
+            showDeleteConfirmDialog = false
+            viewModel.deleteRecord(recordId)
+            onBack()
+          },
+        ) {
+          Text("Eliminar", color = DangerRed, fontWeight = FontWeight.Bold)
+        }
+      },
+      dismissButton = {
+        TextButton(onClick = { showDeleteConfirmDialog = false }) {
+          Text("Cancelar", color = TextSecondary)
+        }
+      },
+    )
   }
 }
 

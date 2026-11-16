@@ -32,6 +32,7 @@ data class SettingsBackupUiState(
   val dbSizeBytes: Long = 0L,
   val updateCacheBytes: Long = 0L,
   val preMigrationBackupsCount: Int = 0,
+  val isProcessingBackup: Boolean = false,
   val feedbackMessage: String? = null,
   val isErrorFeedback: Boolean = false,
 )
@@ -43,6 +44,7 @@ class SettingsBackupViewModel(
   private val dbSizeBytes = MutableStateFlow(container.getDatabaseSizeBytes())
   private val cacheBytes = MutableStateFlow(container.getUpdateCacheSizeBytes())
   private val preMigrationCount = MutableStateFlow(0)
+  private val isProcessingBackup = MutableStateFlow(false)
   private val feedbackMessage = MutableStateFlow<String?>(null)
   private val isErrorFeedback = MutableStateFlow(false)
 
@@ -53,6 +55,7 @@ class SettingsBackupViewModel(
     dbSizeBytes,
     cacheBytes,
     preMigrationCount,
+    isProcessingBackup,
     feedbackMessage,
     isErrorFeedback,
   ) { values ->
@@ -63,8 +66,9 @@ class SettingsBackupViewModel(
       dbSizeBytes = values[3] as Long,
       updateCacheBytes = values[4] as Long,
       preMigrationBackupsCount = values[5] as Int,
-      feedbackMessage = values[6] as String?,
-      isErrorFeedback = values[7] as Boolean,
+      isProcessingBackup = values[6] as Boolean,
+      feedbackMessage = values[7] as String?,
+      isErrorFeedback = values[8] as Boolean,
     )
   }.stateIn(
     scope = viewModelScope,
@@ -109,7 +113,9 @@ class SettingsBackupViewModel(
   }
 
   fun exportEncryptedBackup(context: Context, uri: Uri, passphrase: String) {
+    if (isProcessingBackup.value) return
     viewModelScope.launch {
+      isProcessingBackup.value = true
       try {
         val settings = container.settingsRepository.settings.first()
         val lists = container.savedConfigRepository.observeSavedMessageLists().first()
@@ -137,12 +143,16 @@ class SettingsBackupViewModel(
       } catch (e: Exception) {
         isErrorFeedback.value = true
         feedbackMessage.value = e.message ?: "Error al exportar el respaldo."
+      } finally {
+        isProcessingBackup.value = false
       }
     }
   }
 
   fun importEncryptedBackup(context: Context, uri: Uri, passphrase: String) {
+    if (isProcessingBackup.value) return
     viewModelScope.launch {
+      isProcessingBackup.value = true
       try {
         val raw = withContext(Dispatchers.IO) {
           context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
@@ -228,6 +238,8 @@ class SettingsBackupViewModel(
       } catch (e: Exception) {
         isErrorFeedback.value = true
         feedbackMessage.value = e.message ?: "Clave incorrecta o respaldo dañado."
+      } finally {
+        isProcessingBackup.value = false
       }
     }
   }

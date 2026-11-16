@@ -6,12 +6,14 @@ import androidx.lifecycle.viewModelScope
 import com.whatsapprepeater.app.AppContainer
 import com.whatsapprepeater.core.model.SafetyLimits
 import com.whatsapprepeater.core.model.SavedMessageList
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class MessageEditorUiState(
   val isMultipleMode: Boolean = true,
@@ -156,10 +158,27 @@ class MessageEditorViewModel(
     container.updateDraft { it.copy(repeatCount = clamped) }
   }
 
+  fun selectRepeatPreset(preset: Int) {
+    val safePreset = preset.coerceIn(SafetyLimits.MIN_REPEAT_COUNT, SafetyLimits.MAX_REPEAT_COUNT_HARD_LIMIT)
+    val currentMax = uiState.value.maxRepeatAllowed
+    if (safePreset > currentMax) {
+      container.updateDraft { it.copy(repeatCount = safePreset) }
+      viewModelScope.launch {
+        withContext(NonCancellable) {
+          container.settingsRepository.updateMaxRepeatCount(safePreset)
+        }
+      }
+    } else {
+      container.updateDraft { it.copy(repeatCount = safePreset) }
+    }
+  }
+
   fun updateMaxRepeatAllowed(newMax: Int) {
     val safeMax = newMax.coerceIn(SafetyLimits.MIN_REPEAT_COUNT, SafetyLimits.MAX_REPEAT_COUNT_HARD_LIMIT)
     viewModelScope.launch {
-      container.settingsRepository.updateMaxRepeatCount(safeMax)
+      withContext(NonCancellable) {
+        container.settingsRepository.updateMaxRepeatCount(safeMax)
+      }
       container.updateDraft { draft ->
         draft.copy(repeatCount = draft.repeatCount.coerceAtMost(safeMax))
       }
@@ -171,33 +190,46 @@ class MessageEditorViewModel(
     if (cleanTitle.isEmpty()) return
     val current = container.draft.value
     viewModelScope.launch {
-      container.savedConfigRepository.saveMessageList(
-        SavedMessageList(
-          title = cleanTitle,
-          isMultipleMode = current.isMultipleMode,
-          messages = current.multipleMessages,
-          singleMessage = current.singleMessage,
-          repeatCount = current.repeatCount,
-          updatedAtMillis = System.currentTimeMillis(),
-        ),
-      )
+      withContext(NonCancellable) {
+        container.savedConfigRepository.saveMessageList(
+          SavedMessageList(
+            title = cleanTitle,
+            isMultipleMode = current.isMultipleMode,
+            messages = current.multipleMessages,
+            singleMessage = current.singleMessage,
+            repeatCount = current.repeatCount,
+            updatedAtMillis = System.currentTimeMillis(),
+          ),
+        )
+      }
     }
   }
 
   fun loadSavedTemplate(template: SavedMessageList) {
+    val targetLimit = uiState.value.maxRepeatAllowed.coerceAtLeast(template.repeatCount)
+      .coerceAtMost(SafetyLimits.MAX_REPEAT_COUNT_HARD_LIMIT)
+    if (targetLimit > uiState.value.maxRepeatAllowed) {
+      viewModelScope.launch {
+        withContext(NonCancellable) {
+          container.settingsRepository.updateMaxRepeatCount(targetLimit)
+        }
+      }
+    }
     container.updateDraft {
       it.copy(
         isMultipleMode = template.isMultipleMode,
         multipleMessages = template.messages,
         singleMessage = template.singleMessage,
-        repeatCount = template.repeatCount.coerceIn(SafetyLimits.MIN_REPEAT_COUNT, uiState.value.maxRepeatAllowed),
+        repeatCount = template.repeatCount.coerceIn(SafetyLimits.MIN_REPEAT_COUNT, targetLimit),
       )
     }
   }
 
   fun deleteSavedTemplate(id: Long) {
     viewModelScope.launch {
-      container.savedConfigRepository.deleteMessageList(id)
+      withContext(NonCancellable) {
+        container.savedConfigRepository.deleteMessageList(id)
+      }
     }
   }
 

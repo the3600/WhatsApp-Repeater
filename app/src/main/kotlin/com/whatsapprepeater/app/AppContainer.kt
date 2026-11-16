@@ -89,11 +89,13 @@ data class AutomationDraft(
 
   companion object {
     fun fromPersisted(saved: PersistedAutomationDraft): AutomationDraft {
-      val restoredContact = if (!saved.contactName.isNullOrBlank() && !saved.contactPhone.isNullOrBlank()) {
+      val name = saved.contactName
+      val phone = saved.contactPhone
+      val restoredContact = if (!name.isNullOrBlank() && !phone.isNullOrBlank()) {
         ContactInfo(
-          id = saved.contactId ?: "${saved.contactName}_${saved.contactPhone}",
-          name = saved.contactName!!,
-          phoneNumber = saved.contactPhone!!,
+          id = saved.contactId ?: "${name}_$phone",
+          name = name,
+          phoneNumber = phone,
         )
       } else {
         null
@@ -156,19 +158,26 @@ class AppContainer(context: Context) {
   private val _draft = MutableStateFlow(AutomationDraft())
   val draft: StateFlow<AutomationDraft> = _draft.asStateFlow()
 
+  @Volatile
+  private var draftMutatedInMemory = false
+
   init {
     appScope.launch {
       val persistedDraft = savedConfigRepository.getActiveDraftOnce()
-      if (persistedDraft != null) {
-        _draft.value = AutomationDraft.fromPersisted(persistedDraft)
-      } else {
-        val saved = settingsRepository.settings.first()
-        _draft.update {
-          it.copy(
-            minIntervalSeconds = saved.defaultMinIntervalSeconds,
-            maxIntervalSeconds = saved.defaultMaxIntervalSeconds,
-            preferWhatsAppBusiness = saved.preferWhatsAppBusiness,
-          )
+      if (!draftMutatedInMemory) {
+        if (persistedDraft != null) {
+          _draft.value = AutomationDraft.fromPersisted(persistedDraft)
+        } else {
+          val saved = settingsRepository.settings.first()
+          if (!draftMutatedInMemory) {
+            _draft.update {
+              it.copy(
+                minIntervalSeconds = saved.defaultMinIntervalSeconds,
+                maxIntervalSeconds = saved.defaultMaxIntervalSeconds,
+                preferWhatsAppBusiness = saved.preferWhatsAppBusiness,
+              )
+            }
+          }
         }
       }
     }
@@ -181,6 +190,7 @@ class AppContainer(context: Context) {
   }
 
   fun updateDraft(transform: (AutomationDraft) -> AutomationDraft) {
+    draftMutatedInMemory = true
     _draft.update(transform)
     val snapshot = _draft.value
     appScope.launch {
@@ -193,6 +203,7 @@ class AppContainer(context: Context) {
     defaultMax: Int,
     preferBusiness: Boolean,
   ) {
+    draftMutatedInMemory = true
     _draft.value = AutomationDraft(
       minIntervalSeconds = defaultMin,
       maxIntervalSeconds = defaultMax,

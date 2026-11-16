@@ -40,6 +40,7 @@ import androidx.compose.material.icons.rounded.Vibration
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -263,15 +264,34 @@ fun SettingsBackupScreen(
             )
           }
           Spacer(modifier = Modifier.height(12.dp))
+          if (state.isProcessingBackup) {
+            LinearProgressIndicator(
+              modifier = Modifier
+                .fillMaxWidth()
+                .height(6.dp)
+                .clip(RoundedCornerShape(999.dp)),
+              color = WhatsAppGreen,
+              trackColor = CardSurfaceElevated,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+              text = "Procesando cifrado AES-256-GCM localmente...",
+              style = MaterialTheme.typography.bodySmall,
+              color = WhatsAppGreen,
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+          }
           LargePrimaryButton(
             text = "Exportar copia de seguridad (.json cifrado)",
             icon = Icons.Rounded.Download,
+            enabled = !state.isProcessingBackup,
             onClick = { createBackupLauncher.launch("whatsapp-repeater-backup.json") },
           )
           Spacer(modifier = Modifier.height(10.dp))
           LargeSecondaryButton(
             text = "Restaurar desde archivo local",
             icon = Icons.Rounded.UploadFile,
+            enabled = !state.isProcessingBackup,
             onClick = { openBackupLauncher.launch(arrayOf("application/json", "*/*")) },
           )
           Spacer(modifier = Modifier.height(12.dp))

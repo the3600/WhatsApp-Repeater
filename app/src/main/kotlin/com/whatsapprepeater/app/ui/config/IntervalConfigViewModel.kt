@@ -6,12 +6,14 @@ import androidx.lifecycle.viewModelScope
 import com.whatsapprepeater.app.AppContainer
 import com.whatsapprepeater.core.model.IntervalRange
 import com.whatsapprepeater.core.model.SafetyLimits
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class IntervalConfigUiState(
   val minSeconds: Int = SafetyLimits.DEFAULT_MIN_INTERVAL_SECONDS,
@@ -111,10 +113,12 @@ class IntervalConfigViewModel(
     }
 
     viewModelScope.launch {
-      if (saveAsDefaultFlow.value) {
-        container.settingsRepository.updateDefaultIntervals(range.minSeconds, range.maxSeconds)
+      withContext(NonCancellable) {
+        if (saveAsDefaultFlow.value) {
+          container.settingsRepository.updateDefaultIntervals(range.minSeconds, range.maxSeconds)
+        }
+        container.settingsRepository.updatePreferWhatsAppBusiness(preferBusinessFlow.value)
       }
-      container.settingsRepository.updatePreferWhatsAppBusiness(preferBusinessFlow.value)
     }
     return true
   }
