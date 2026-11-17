@@ -34,6 +34,7 @@ import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.BookmarkAdd
 import androidx.compose.material.icons.rounded.Bookmarks
+import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.Edit
@@ -86,14 +87,16 @@ fun MessageEditorScreen(
   viewModel: MessageEditorViewModel,
   onBack: () -> Unit,
   onContinue: () -> Unit,
+  onOpenLibrary: () -> Unit = {},
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
+  val composerField by viewModel.newMessageField.collectAsStateWithLifecycle()
   var editingIndex by remember { mutableStateOf<Int?>(null) }
   var editingText by remember { mutableStateOf("") }
   var showPreviewDialog by remember { mutableStateOf(false) }
   var showSaveTemplateDialog by remember { mutableStateOf(false) }
-  var templateTitleInput by remember { mutableStateOf("") }
   var showSavedListsDialog by remember { mutableStateOf(false) }
+  var showSearchReplaceDialog by remember { mutableStateOf(false) }
 
   LaunchedEffect(Unit) {
     viewModel.setMultipleMode(true)
@@ -131,23 +134,22 @@ fun MessageEditorScreen(
       contentPadding = PaddingValues(16.dp),
       verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-      // Barra de listas guardadas
+      // Barra de listas guardadas y Biblioteca inteligente
       item {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
           SmallActionChip(
-            text = "Listas guardadas (${multipleSavedLists.size})",
+            text = "Biblioteca (${state.savedLists.size})",
             icon = Icons.Rounded.Bookmarks,
             highlighted = false,
-            onClick = { showSavedListsDialog = true },
+            onClick = { onOpenLibrary() },
             modifier = Modifier.weight(1f),
           )
           SmallActionChip(
-            text = "Guardar lista",
+            text = "Guardar plantilla",
             icon = Icons.Rounded.BookmarkAdd,
             highlighted = state.canProceedMultiple,
             onClick = {
               if (state.canProceedMultiple) {
-                templateTitleInput = ""
                 showSaveTemplateDialog = true
               }
             },
@@ -156,7 +158,7 @@ fun MessageEditorScreen(
         }
       }
 
-      // Redactar mensaje (Stitch 5)
+      // Redactar mensaje (Stitch 5 + Editor contextual inteligente)
       item {
         SectionCard {
           Row(
@@ -171,19 +173,19 @@ fun MessageEditorScreen(
               fontWeight = FontWeight.SemiBold,
             )
             Text(
-              text = "${state.newMessageInput.length} / ${SafetyLimits.MAX_MESSAGE_LENGTH}",
+              text = "${composerField.text.length} / ${SafetyLimits.MAX_MESSAGE_LENGTH}",
               style = MaterialTheme.typography.bodySmall,
               color = TextSecondary,
             )
           }
           Spacer(modifier = Modifier.height(10.dp))
           OutlinedTextField(
-            value = state.newMessageInput,
-            onValueChange = viewModel::onNewMessageInputChanged,
+            value = composerField,
+            onValueChange = viewModel::onNewMessageFieldChanged,
             modifier = Modifier.fillMaxWidth(),
             placeholder = { Text("Escribe tu mensaje...", color = TextSecondary) },
             minLines = 3,
-            maxLines = 5,
+            maxLines = 6,
             shape = RoundedCornerShape(14.dp),
             colors = OutlinedTextFieldDefaults.colors(
               focusedContainerColor = CardSurfaceElevated,
@@ -194,20 +196,19 @@ fun MessageEditorScreen(
               unfocusedTextColor = TextPrimary,
             ),
           )
-          Spacer(modifier = Modifier.height(8.dp))
-          Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-          ) {
-            FormatMiniButton("B", FontWeight.Bold) { viewModel.wrapOrAppendFormatting("*") }
-            FormatMiniButton("I", FontWeight.Medium, italic = true) { viewModel.wrapOrAppendFormatting("_") }
-            FormatMiniButton("S", FontWeight.Medium, strike = true) { viewModel.wrapOrAppendFormatting("~") }
-            Text(
-              text = "Formato WhatsApp",
-              style = MaterialTheme.typography.bodySmall,
-              color = TextSecondary,
-            )
-          }
+          SmartEditorToolkit(
+            rawText = composerField.text,
+            livePreviewText = state.livePreviewText,
+            variableError = state.variableError,
+            detectedLinksCount = state.detectedLinksCount,
+            canUndo = state.canUndo,
+            canRedo = state.canRedo,
+            onFormatMarkdown = viewModel::wrapOrAppendFormatting,
+            onInsertSnippet = viewModel::insertSnippetInComposer,
+            onUndo = { viewModel.undoActiveEditor(isMultiple = true) },
+            onRedo = { viewModel.redoActiveEditor(isMultiple = true) },
+            onOpenSearchReplace = { showSearchReplaceDialog = true },
+          )
           if (state.validationError != null) {
             Spacer(modifier = Modifier.height(6.dp))
             Text(state.validationError ?: "", style = MaterialTheme.typography.bodySmall, color = DangerRed)
@@ -333,6 +334,14 @@ fun MessageEditorScreen(
               }
               IconButton(
                 onClick = {
+                  editingIndex = null
+                  viewModel.duplicateMessageAt(index)
+                },
+              ) {
+                Icon(Icons.Rounded.ContentCopy, contentDescription = "Duplicar", tint = TextPrimary)
+              }
+              IconButton(
+                onClick = {
                   editingIndex = index
                   editingText = message
                 },
@@ -455,42 +464,21 @@ fun MessageEditorScreen(
   }
 
   if (showSaveTemplateDialog) {
-    AlertDialog(
-      onDismissRequest = { showSaveTemplateDialog = false },
-      containerColor = CardSurface,
-      titleContentColor = TextPrimary,
-      title = { Text("Guardar lista de mensajes") },
-      text = {
-        OutlinedTextField(
-          value = templateTitleInput,
-          onValueChange = { templateTitleInput = it.take(48) },
-          label = { Text("Nombre de la lista") },
-          singleLine = true,
-          colors = OutlinedTextFieldDefaults.colors(
-            focusedBorderColor = WhatsAppGreen,
-            unfocusedBorderColor = OutlineSubtle,
-            focusedTextColor = TextPrimary,
-            unfocusedTextColor = TextPrimary,
-          ),
-        )
+    SaveTemplateMetadataDialog(
+      dialogTitle = "Guardar secuencia en Biblioteca",
+      onDismiss = { showSaveTemplateDialog = false },
+      onConfirm = { title, category, tags, isFav ->
+        viewModel.saveCurrentAsTemplate(title, category, tags, isFav)
       },
-      confirmButton = {
-        TextButton(
-          enabled = templateTitleInput.isNotBlank(),
-          onClick = {
-            if (templateTitleInput.isNotBlank()) {
-              viewModel.saveCurrentAsTemplate(templateTitleInput)
-              showSaveTemplateDialog = false
-            }
-          },
-        ) {
-          Text("Guardar", color = if (templateTitleInput.isNotBlank()) WhatsAppGreen else TextSecondary, fontWeight = FontWeight.Bold)
-        }
-      },
-      dismissButton = {
-        TextButton(onClick = { showSaveTemplateDialog = false }) {
-          Text("Cancelar", color = TextSecondary)
-        }
+    )
+  }
+
+  if (showSearchReplaceDialog) {
+    SearchReplaceDialog(
+      supportsListReplace = true,
+      onDismiss = { showSearchReplaceDialog = false },
+      onApply = { find, replace, applyList ->
+        viewModel.searchAndReplace(find, replace, isMultiple = true, applyToSavedList = applyList)
       },
     )
   }
@@ -542,35 +530,6 @@ fun MessageEditorScreen(
         }
       },
     )
-  }
-}
-
-@Composable
-private fun FormatMiniButton(
-  label: String,
-  weight: FontWeight,
-  italic: Boolean = false,
-  strike: Boolean = false,
-  onClick: () -> Unit,
-) {
-  Surface(
-    shape = RoundedCornerShape(8.dp),
-    color = CardSurfaceElevated,
-    border = BorderStroke(1.dp, OutlineSubtle),
-    modifier = Modifier
-      .size(34.dp)
-      .clip(RoundedCornerShape(8.dp))
-      .clickable(onClick = onClick),
-  ) {
-    Box(contentAlignment = Alignment.Center) {
-      Text(
-        text = label,
-        color = TextPrimary,
-        fontWeight = weight,
-        fontStyle = if (italic) FontStyle.Italic else FontStyle.Normal,
-        textDecoration = if (strike) TextDecoration.LineThrough else TextDecoration.None,
-      )
-    }
   }
 }
 

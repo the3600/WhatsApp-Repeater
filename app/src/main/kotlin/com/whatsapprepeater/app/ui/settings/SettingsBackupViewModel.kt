@@ -123,6 +123,7 @@ class SettingsBackupViewModel(
         val history = container.historyRepository.getAllExecutionsOnce()
         val autoReplyRules = container.autoReplyRepository.getRulesOnce()
         val autoReplySettings = container.autoReplySettingsRepository.settings.first()
+        val scheduledTasks = container.scheduledTaskRepository.getAllOnce()
 
         val encrypted = withContext(Dispatchers.Default) {
           LocalBackupManager.exportEncryptedJson(
@@ -133,6 +134,7 @@ class SettingsBackupViewModel(
             history = history,
             autoReplyRules = autoReplyRules,
             autoReplySettings = autoReplySettings,
+            scheduledTasks = scheduledTasks,
           )
         }
 
@@ -188,6 +190,7 @@ class SettingsBackupViewModel(
         container.settingsRepository.updatePreferWhatsAppBusiness(payload.settings.preferWhatsAppBusiness)
         container.settingsRepository.updateHapticFeedback(payload.settings.hapticFeedbackEnabled)
         container.settingsRepository.updateKeepScreenOn(payload.settings.keepScreenOnDuringAutomation)
+        container.settingsRepository.updateVacationPause(payload.settings.vacationPauseEnabled)
         container.settingsRepository.updateGitHubRepository(
           payload.settings.githubRepoOwner,
           payload.settings.githubRepoName,
@@ -211,6 +214,12 @@ class SettingsBackupViewModel(
                 singleMessage = dto.singleMessage,
                 repeatCount = dto.repeatCount,
                 updatedAtMillis = dto.updatedAtMillis,
+                category = dto.category,
+                tags = dto.tags,
+                isFavorite = dto.isFavorite,
+                isPinned = dto.isPinned,
+                useCount = dto.useCount,
+                lastUsedAtMillis = dto.lastUsedAtMillis,
               ),
             )
           }
@@ -262,6 +271,22 @@ class SettingsBackupViewModel(
         payload.autoReplySettings?.let { restoredAuto ->
           val parsed = LocalBackupManager.toAutoReplySettings(restoredAuto)
           container.autoReplySettingsRepository.updateSettings { parsed }
+        }
+
+        // Restaurar programaciones sin duplicar existentes
+        val existingScheduleKeys = container.scheduledTaskRepository
+          .getAllOnce()
+          .map { "${it.title}_${it.contactPhone}_${it.triggerAtMillis}" }
+          .toSet()
+
+        LocalBackupManager.toScheduledTasks(payload.scheduledTasks).forEach { task ->
+          val key = "${task.title}_${task.contactPhone}_${task.triggerAtMillis}"
+          if (key !in existingScheduleKeys) {
+            val savedId = container.scheduledTaskRepository.saveTask(task)
+            if (task.enabled) {
+              container.schedulerAlarmHelper.scheduleTaskReminder(task.copy(id = savedId))
+            }
+          }
         }
 
         refreshStorageStats(context)

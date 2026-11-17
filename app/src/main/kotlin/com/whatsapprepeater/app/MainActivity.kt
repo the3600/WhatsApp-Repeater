@@ -1,5 +1,6 @@
 package com.whatsapprepeater.app
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
@@ -9,9 +10,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
+import com.whatsapprepeater.app.scheduler.SchedulerAlarmHelper
 import com.whatsapprepeater.app.ui.theme.WhatsAppRepeaterTheme
 
 class MainActivity : ComponentActivity() {
+  private var appContainer: AppContainer? = null
+
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
 
@@ -19,6 +23,9 @@ class MainActivity : ComponentActivity() {
     enableEdgeToEdge(statusBarStyle = darkBarStyle, navigationBarStyle = darkBarStyle)
 
     val container = (application as WhatsAppRepeaterApp).container
+    appContainer = container
+    handleIncomingIntent(intent, container)
+
     setContent {
       WhatsAppRepeaterTheme {
         Surface(
@@ -28,6 +35,20 @@ class MainActivity : ComponentActivity() {
           MainNavigation(container = container)
         }
       }
+    }
+  }
+
+  override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    setIntent(intent)
+    appContainer?.let { handleIncomingIntent(intent, it) }
+  }
+
+  private fun handleIncomingIntent(intent: Intent?, container: AppContainer) {
+    val taskId = intent?.getLongExtra(SchedulerAlarmHelper.EXTRA_LAUNCH_SCHEDULED_TASK_ID, -1L) ?: -1L
+    if (taskId > 0L) {
+      container.requestOpenScheduledTask(taskId)
+      intent?.removeExtra(SchedulerAlarmHelper.EXTRA_LAUNCH_SCHEDULED_TASK_ID)
     }
   }
 }

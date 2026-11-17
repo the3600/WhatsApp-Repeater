@@ -4,6 +4,7 @@ import com.whatsapprepeater.core.model.AutomationConfig
 import com.whatsapprepeater.core.model.AutomationState
 import com.whatsapprepeater.core.model.AutomationStatus
 import com.whatsapprepeater.core.model.ContactInfo
+import com.whatsapprepeater.core.model.DynamicVariablesEngine
 import com.whatsapprepeater.core.model.ExecutionFinalStatus
 import com.whatsapprepeater.core.model.ExecutionRecord
 import com.whatsapprepeater.core.model.MessageExecutionTrace
@@ -114,6 +115,21 @@ class AutomationEngine(
       )
       return
     }
+
+      val unresolvedTokens = loadedMessages
+        .flatMap { DynamicVariablesEngine.findPlaceholders(it) }
+        .distinct()
+      if (unresolvedTokens.isNotEmpty()) {
+        queueManager.clear()
+        _state.value = AutomationState(
+          status = AutomationStatus.ERROR,
+          contact = config.contact,
+          errorCount = 1,
+          statusDetail = "Variables sin resolver",
+          errorMessage = "Se detectaron variables sin resolver (${unresolvedTokens.joinToString(", ")}). Cancela y corrígelas antes de enviar.",
+        )
+        return
+      }
 
       val now = clockMillis()
       val batchId = "WR-${((now % 90_000L) + 10_000L)}"

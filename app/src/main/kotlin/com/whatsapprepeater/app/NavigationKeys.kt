@@ -26,3 +26,7 @@ import kotlinx.serialization.Serializable
 @Serializable data object AutoReplyAwayRoute : NavKey
 @Serializable data object AutoReplyHistoryRoute : NavKey
 @Serializable data object AutoReplyPermissionsRoute : NavKey
+@Serializable data object SmartLibraryRoute : NavKey
+@Serializable data object SchedulerRoute : NavKey
+@Serializable data object DiagnosticsRoute : NavKey
+@Serializable data object AnalyticsRoute : NavKey

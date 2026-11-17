@@ -1,6 +1,7 @@
 package com.whatsapprepeater.app
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -32,10 +33,17 @@ import com.whatsapprepeater.app.ui.history.HistoryScreen
 import com.whatsapprepeater.app.ui.history.HistoryViewModel
 import com.whatsapprepeater.app.ui.home.HomeScreen
 import com.whatsapprepeater.app.ui.home.HomeViewModel
+import com.whatsapprepeater.app.ui.insights.AnalyticsScreen
+import com.whatsapprepeater.app.ui.insights.DiagnosticsScreen
+import com.whatsapprepeater.app.ui.insights.InsightsViewModel
+import com.whatsapprepeater.app.ui.library.SmartLibraryScreen
+import com.whatsapprepeater.app.ui.library.SmartLibraryViewModel
 import com.whatsapprepeater.app.ui.messages.MessageEditorScreen
 import com.whatsapprepeater.app.ui.messages.MessageEditorViewModel
 import com.whatsapprepeater.app.ui.messages.RepetitionConfigScreen
 import com.whatsapprepeater.app.ui.permissions.PermissionsAccessibilityScreen
+import com.whatsapprepeater.app.ui.scheduler.SchedulerScreen
+import com.whatsapprepeater.app.ui.scheduler.SchedulerViewModel
 import com.whatsapprepeater.app.ui.settings.SettingsBackupScreen
 import com.whatsapprepeater.app.ui.settings.SettingsBackupViewModel
 import com.whatsapprepeater.app.ui.splash.SplashScreen
@@ -49,12 +57,24 @@ fun MainNavigation(container: AppContainer) {
   val currentSettings by container.settingsRepository.settings.collectAsStateWithLifecycle(
     initialValue = AppSettings(),
   )
+  val pendingScheduledId by container.pendingScheduleLaunch.collectAsStateWithLifecycle()
 
   fun resetToRoot(root: NavKey) {
     if (backStack.size == 1 && backStack.firstOrNull() == root) return
     backStack.add(root)
     while (backStack.size > 1) {
       backStack.removeAt(0)
+    }
+  }
+
+  LaunchedEffect(pendingScheduledId) {
+    val taskId = pendingScheduledId ?: return@LaunchedEffect
+    val task = container.scheduledTaskRepository.getById(taskId)
+    container.clearPendingScheduledLaunch()
+    if (task != null) {
+      container.loadScheduledTaskIntoDraft(task)
+      resetToRoot(HomeRoute)
+      backStack.add(ConfirmationRoute)
     }
   }
 
@@ -112,6 +132,11 @@ fun MainNavigation(container: AppContainer) {
           onOpenHistoryTab = { resetToRoot(HistoryRoute) },
           onOpenHistoryDetail = { id -> backStack.add(HistoryDetailRoute(id)) },
           onSelectBottomTab = ::navigateByBottomTab,
+          onOpenLibrary = { backStack.add(SmartLibraryRoute) },
+          onOpenScheduler = { backStack.add(SchedulerRoute) },
+          onOpenDiagnostics = { backStack.add(DiagnosticsRoute) },
+          onOpenAnalytics = { backStack.add(AnalyticsRoute) },
+          onOpenUpdates = { backStack.add(UpdatesRoute) },
         )
       }
 
@@ -139,6 +164,7 @@ fun MainNavigation(container: AppContainer) {
           viewModel = vm,
           onBack = { backStack.removeLastOrNull() },
           onContinue = { backStack.add(IntervalConfigRoute) },
+          onOpenLibrary = { backStack.add(SmartLibraryRoute) },
         )
       }
 
@@ -148,6 +174,7 @@ fun MainNavigation(container: AppContainer) {
           viewModel = vm,
           onBack = { backStack.removeLastOrNull() },
           onContinue = { backStack.add(IntervalConfigRoute) },
+          onOpenLibrary = { backStack.add(SmartLibraryRoute) },
         )
       }
 
@@ -215,6 +242,8 @@ fun MainNavigation(container: AppContainer) {
           onOpenUpdates = { backStack.add(UpdatesRoute) },
           onOpenPermissions = { backStack.add(PermissionsRoute) },
           onSelectBottomTab = ::navigateByBottomTab,
+          onOpenDiagnostics = { backStack.add(DiagnosticsRoute) },
+          onOpenAnalytics = { backStack.add(AnalyticsRoute) },
         )
       }
 
@@ -305,6 +334,54 @@ fun MainNavigation(container: AppContainer) {
       entry<AutoReplyPermissionsRoute> {
         val vm: AutoReplyViewModel = viewModel(factory = AutoReplyViewModel.factory(container))
         AutoReplyPermissionsScreen(
+          viewModel = vm,
+          onBack = { backStack.removeLastOrNull() },
+        )
+      }
+      entry<SmartLibraryRoute> {
+        val vm: SmartLibraryViewModel = viewModel(factory = SmartLibraryViewModel.factory(container))
+        SmartLibraryScreen(
+          viewModel = vm,
+          onBack = { backStack.removeLastOrNull() },
+          onOpenTemplateInEditor = { isMultiple ->
+            backStack.removeLastOrNull()
+            if (isMultiple) {
+              navigateBackToOrAdd(MessageEditorRoute)
+            } else {
+              navigateBackToOrAdd(RepetitionConfigRoute)
+            }
+          },
+        )
+      }
+      entry<SchedulerRoute> {
+        val vm: SchedulerViewModel = viewModel(factory = SchedulerViewModel.factory(container))
+        SchedulerScreen(
+          viewModel = vm,
+          onBack = { backStack.removeLastOrNull() },
+          onOpenWizardToPrepareDraft = { backStack.add(ContactPickerRoute) },
+          onExecutePreparedTask = { backStack.add(ConfirmationRoute) },
+        )
+      }
+      entry<DiagnosticsRoute> {
+        val vm: InsightsViewModel = viewModel(factory = InsightsViewModel.factory(container))
+        DiagnosticsScreen(
+          viewModel = vm,
+          onBack = { backStack.removeLastOrNull() },
+          onOpenAccessibility = { backStack.add(PermissionsRoute) },
+          onOpenAutoReplyPermissions = { backStack.add(AutoReplyPermissionsRoute) },
+          onOpenUpdates = { backStack.add(UpdatesRoute) },
+          onOpenEditor = {
+            if (container.draft.value.isMultipleMode) {
+              backStack.add(MessageEditorRoute)
+            } else {
+              backStack.add(RepetitionConfigRoute)
+            }
+          },
+        )
+      }
+      entry<AnalyticsRoute> {
+        val vm: InsightsViewModel = viewModel(factory = InsightsViewModel.factory(container))
+        AnalyticsScreen(
           viewModel = vm,
           onBack = { backStack.removeLastOrNull() },
         )

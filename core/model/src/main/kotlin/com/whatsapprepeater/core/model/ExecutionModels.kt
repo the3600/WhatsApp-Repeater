@@ -123,6 +123,7 @@ data class AppSettings(
   val preferWhatsAppBusiness: Boolean = false,
   val hapticFeedbackEnabled: Boolean = true,
   val keepScreenOnDuringAutomation: Boolean = true,
+  val vacationPauseEnabled: Boolean = false,
   val githubRepoOwner: String = "the3600",
   val githubRepoName: String = "WhatsApp-Repeater",
 )
@@ -138,6 +139,12 @@ data class SavedMessageList(
   val singleMessage: String,
   val repeatCount: Int,
   val updatedAtMillis: Long,
+  val category: String = "General",
+  val tags: List<String> = emptyList(),
+  val isFavorite: Boolean = false,
+  val isPinned: Boolean = false,
+  val useCount: Int = 0,
+  val lastUsedAtMillis: Long = 0L,
 )
 
 /**

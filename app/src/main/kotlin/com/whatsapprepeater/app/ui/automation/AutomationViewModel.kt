@@ -9,7 +9,9 @@ import com.whatsapprepeater.app.ui.components.EmergencyStopDialogState
 import com.whatsapprepeater.app.ui.components.EmergencyStopStage
 import com.whatsapprepeater.core.model.AppSettings
 import com.whatsapprepeater.core.model.AutomationState
+import com.whatsapprepeater.core.model.DynamicVariablesEngine
 import com.whatsapprepeater.core.model.MessageMode
+import com.whatsapprepeater.core.model.VariableResolutionResult
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -33,10 +35,34 @@ data class AutomationUiState(
       is MessageMode.RepeatSingleMessage -> if (mode.message.isBlank()) 0 else mode.repeatCount
     }
 
+  val resolvedModePreview: MessageMode
+    get() = when (val mode = draft.toMessageMode()) {
+      is MessageMode.MultipleMessages -> {
+        val (resolved, _) = DynamicVariablesEngine.validateBatch(mode.messages, draft.selectedContact)
+        MessageMode.MultipleMessages(resolved)
+      }
+      is MessageMode.RepeatSingleMessage -> {
+        val text = when (val res = DynamicVariablesEngine.resolveOrValidate(mode.message, draft.selectedContact)) {
+          is VariableResolutionResult.Resolved -> res.text
+          is VariableResolutionResult.Unresolved -> mode.message
+        }
+        MessageMode.RepeatSingleMessage(text, mode.repeatCount)
+      }
+    }
+
+  val variableValidationError: String?
+    get() = when (val mode = draft.toMessageMode()) {
+      is MessageMode.MultipleMessages ->
+        DynamicVariablesEngine.validateBatch(mode.messages, draft.selectedContact).second?.reason
+      is MessageMode.RepeatSingleMessage ->
+        (DynamicVariablesEngine.resolveOrValidate(mode.message, draft.selectedContact) as? VariableResolutionResult.Unresolved)?.reason
+    }
+
   val canStartAutomation: Boolean
     get() = draft.selectedContact != null &&
       totalScheduledPreview > 0 &&
       draft.toIntervalRange().isValid &&
+      variableValidationError == null &&
       isServiceConnected &&
       isWhatsAppInstalled &&
       userCheckboxConfirmed &&
@@ -85,16 +111,36 @@ class AutomationViewModel(
   }
 
   fun startAutomation() {
-    val config = container.draft.value.toConfirmedConfig(confirmed = checkboxConfirmed.value) ?: return
+    val rawConfig = container.draft.value.toConfirmedConfig(confirmed = checkboxConfirmed.value) ?: return
+    val resolvedConfig = resolveAndValidateConfig(rawConfig) ?: return
+    container.markActiveScheduledTaskStarted()
     emergencyDialogState.value = EmergencyStopDialogState()
-    container.automationEngine.start(config)
+    container.automationEngine.start(resolvedConfig)
   }
 
   fun repeatSameConfiguration() {
-    val config = container.draft.value.toConfirmedConfig(confirmed = true) ?: return
+    val rawConfig = container.draft.value.toConfirmedConfig(confirmed = true) ?: return
+    val resolvedConfig = resolveAndValidateConfig(rawConfig) ?: return
     checkboxConfirmed.value = true
     emergencyDialogState.value = EmergencyStopDialogState()
-    container.automationEngine.start(config)
+    container.automationEngine.start(resolvedConfig)
+  }
+
+  private fun resolveAndValidateConfig(config: com.whatsapprepeater.core.model.AutomationConfig): com.whatsapprepeater.core.model.AutomationConfig? {
+    val resolvedMode = when (val mode = config.mode) {
+      is MessageMode.MultipleMessages -> {
+        val (resolved, err) = DynamicVariablesEngine.validateBatch(mode.messages, config.contact)
+        if (err != null) return null
+        MessageMode.MultipleMessages(resolved)
+      }
+      is MessageMode.RepeatSingleMessage -> {
+        when (val res = DynamicVariablesEngine.resolveOrValidate(mode.message, config.contact)) {
+          is VariableResolutionResult.Resolved -> MessageMode.RepeatSingleMessage(res.text, mode.repeatCount)
+          is VariableResolutionResult.Unresolved -> return null
+        }
+      }
+    }
+    return config.copy(mode = resolvedMode)
   }
 
   fun pauseAutomation() {

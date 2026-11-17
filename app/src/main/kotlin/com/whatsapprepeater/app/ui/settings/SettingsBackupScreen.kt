@@ -25,6 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.AccessibilityNew
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.BusinessCenter
 import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.DarkMode
@@ -97,6 +98,8 @@ fun SettingsBackupScreen(
   onOpenUpdates: () -> Unit,
   onOpenPermissions: () -> Unit,
   onSelectBottomTab: (BottomTab) -> Unit,
+  onOpenDiagnostics: () -> Unit = {},
+  onOpenAnalytics: () -> Unit = {},
 ) {
   val context = LocalContext.current
   val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -347,6 +350,18 @@ fun SettingsBackupScreen(
             title = "Permisos y Servicio de Accesibilidad",
             tint = WhatsAppGreen,
             onClick = onOpenPermissions,
+          )
+          ActionRowItem(
+            icon = Icons.Rounded.Shield,
+            title = "Diagnóstico automático del sistema",
+            tint = WhatsAppGreen,
+            onClick = onOpenDiagnostics,
+          )
+          ActionRowItem(
+            icon = Icons.Rounded.BarChart,
+            title = "Analíticas locales privadas",
+            tint = TextPrimary,
+            onClick = onOpenAnalytics,
           )
           ActionRowItem(
             icon = Icons.Rounded.SystemUpdate,

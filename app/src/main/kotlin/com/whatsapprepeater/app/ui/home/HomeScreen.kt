@@ -3,8 +3,10 @@ package com.whatsapprepeater.app.ui.home
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,6 +21,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -26,13 +29,19 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.automirrored.rounded.MenuBook
 import androidx.compose.material.icons.rounded.AccessibilityNew
 import androidx.compose.material.icons.rounded.AddCircleOutline
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.BookmarkAdded
+import androidx.compose.material.icons.rounded.Bookmarks
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ErrorOutline
+import androidx.compose.material.icons.rounded.HealthAndSafety
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.RepeatOn
+import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Shield
+import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -98,6 +107,11 @@ fun HomeScreen(
   onOpenHistoryTab: () -> Unit,
   onOpenHistoryDetail: (Long) -> Unit,
   onSelectBottomTab: (BottomTab) -> Unit,
+  onOpenLibrary: () -> Unit = {},
+  onOpenScheduler: () -> Unit = {},
+  onOpenDiagnostics: () -> Unit = {},
+  onOpenAnalytics: () -> Unit = {},
+  onOpenUpdates: () -> Unit = {},
 ) {
   val context = LocalContext.current
   val lifecycleOwner = LocalLifecycleOwner.current
@@ -323,6 +337,116 @@ fun HomeScreen(
         }
       }
 
+      // Centro de Control: estado real de Motor 1, Motor 2, Programación y Alertas
+      item {
+        SectionCard {
+          Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            Text("Centro de Control", style = MaterialTheme.typography.titleMedium, color = TextPrimary, fontWeight = FontWeight.Bold)
+            if (state.attentionAlertsCount > 0) {
+              Surface(
+                shape = RoundedCornerShape(999.dp),
+                color = WarningContainer,
+                modifier = Modifier
+                  .clip(RoundedCornerShape(999.dp))
+                  .clickable(onClick = onOpenDiagnostics),
+              ) {
+                Text(
+                  text = "${state.attentionAlertsCount} aviso(s)",
+                  style = MaterialTheme.typography.labelSmall,
+                  color = WarningAmber,
+                  fontWeight = FontWeight.Bold,
+                  modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                )
+              }
+            }
+          }
+          Spacer(modifier = Modifier.height(10.dp))
+          Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            ControlMiniStatusTile(
+              title = "Motor 1",
+              value = when {
+                state.activeAutomationState.isRunning -> "Enviando (${state.activeAutomationState.sentConfirmed}/${state.activeAutomationState.totalScheduled})"
+                state.isAccessibilityReady -> "Listo • ${state.draftPendingMessagesCount} pend."
+                else -> "Sin permiso"
+              },
+              highlighted = state.isAccessibilityReady,
+              modifier = Modifier.weight(1f),
+              onClick = if (state.activeAutomationState.isRunning) onOpenActiveAutomation else onOpenPermissions,
+            )
+            ControlMiniStatusTile(
+              title = "Motor 2",
+              value = when {
+                state.autoReplySettings.masterEnabled && state.autoReplyRuntime.isListenerConnected ->
+                  "Activo (${state.autoReplyRuntime.sentThisSession} resp.)"
+                state.autoReplySettings.masterEnabled -> "Sin escucha"
+                else -> "Pausado"
+              },
+              highlighted = state.autoReplySettings.masterEnabled && state.autoReplyRuntime.isListenerConnected,
+              modifier = Modifier.weight(1f),
+              onClick = { onSelectBottomTab(BottomTab.AUTORESPONDER) },
+            )
+          }
+          Spacer(modifier = Modifier.height(8.dp))
+          val nextTask = state.nextScheduledTask
+          val scheduleLabel = when {
+            state.settings.vacationPauseEnabled -> "Modo vacaciones activo (pausado)"
+            nextTask != null -> {
+              val dateFmt = SimpleDateFormat("dd/MM HH:mm", Locale.getDefault()).format(Date(nextTask.triggerAtMillis))
+              "${nextTask.title} ($dateFmt)"
+            }
+            else -> "Sin envíos programados"
+          }
+          Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+            modifier = Modifier
+              .fillMaxWidth()
+              .clip(RoundedCornerShape(12.dp))
+              .background(CardSurfaceElevated)
+              .clickable(onClick = onOpenScheduler)
+              .padding(horizontal = 12.dp, vertical = 10.dp),
+          ) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+              Icon(Icons.Rounded.Schedule, contentDescription = null, tint = WhatsAppGreen, modifier = Modifier.size(18.dp))
+              Spacer(modifier = Modifier.width(8.dp))
+              Column {
+                Text("Próxima programación", style = MaterialTheme.typography.labelSmall, color = TextSecondary)
+                Text(
+                  text = scheduleLabel,
+                  style = MaterialTheme.typography.bodySmall,
+                  color = TextPrimary,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                )
+              }
+            }
+            Icon(Icons.AutoMirrored.Rounded.ArrowForward, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(16.dp))
+          }
+          Spacer(modifier = Modifier.height(10.dp))
+          Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier
+              .fillMaxWidth()
+              .horizontalScroll(rememberScrollState()),
+          ) {
+            ControlShortcutChip("Biblioteca (${state.savedTemplatesCount})", Icons.Rounded.Bookmarks, onOpenLibrary)
+            ControlShortcutChip("Programador", Icons.Rounded.Schedule, onOpenScheduler)
+            ControlShortcutChip("Diagnóstico", Icons.Rounded.HealthAndSafety, onOpenDiagnostics)
+            ControlShortcutChip("Analíticas", Icons.Rounded.BarChart, onOpenAnalytics)
+            ControlShortcutChip("Motor 2", Icons.Rounded.AutoAwesome) { onSelectBottomTab(BottomTab.AUTORESPONDER) }
+            ControlShortcutChip(
+              if (state.canInstallUpdates) "Actualizador listo" else "Actualizador",
+              Icons.Rounded.SystemUpdate,
+              onOpenUpdates,
+            )
+          }
+        }
+      }
+
       // Actividad reciente (real o estado vacío real)
       item {
         Row(
@@ -508,3 +632,56 @@ private fun RecentExecutionCard(
 }
 
 private data class Quad<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
+
+@Composable
+private fun ControlMiniStatusTile(
+  title: String,
+  value: String,
+  highlighted: Boolean,
+  modifier: Modifier = Modifier,
+  onClick: () -> Unit,
+) {
+  Column(
+    modifier = modifier
+      .clip(RoundedCornerShape(14.dp))
+      .background(CardSurfaceElevated)
+      .clickable(onClick = onClick)
+      .padding(10.dp),
+  ) {
+    Text(title, style = MaterialTheme.typography.labelSmall, color = TextSecondary)
+    Spacer(modifier = Modifier.height(2.dp))
+    Text(
+      text = value,
+      style = MaterialTheme.typography.bodySmall,
+      color = if (highlighted) WhatsAppGreen else WarningAmber,
+      fontWeight = FontWeight.SemiBold,
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis,
+    )
+  }
+}
+
+@Composable
+private fun ControlShortcutChip(
+  label: String,
+  icon: androidx.compose.ui.graphics.vector.ImageVector,
+  onClick: () -> Unit,
+) {
+  Surface(
+    shape = RoundedCornerShape(999.dp),
+    color = CardSurfaceElevated,
+    border = BorderStroke(1.dp, com.whatsapprepeater.app.ui.theme.OutlineSubtle),
+    modifier = Modifier
+      .clip(RoundedCornerShape(999.dp))
+      .clickable(onClick = onClick),
+  ) {
+    Row(
+      verticalAlignment = Alignment.CenterVertically,
+      modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+    ) {
+      Icon(icon, contentDescription = null, tint = WhatsAppGreen, modifier = Modifier.size(15.dp))
+      Spacer(modifier = Modifier.width(6.dp))
+      Text(label, style = MaterialTheme.typography.labelMedium, color = TextPrimary)
+    }
+  }
+}

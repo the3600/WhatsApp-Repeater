@@ -78,11 +78,13 @@ fun RepetitionConfigScreen(
   viewModel: MessageEditorViewModel,
   onBack: () -> Unit,
   onContinue: () -> Unit,
+  onOpenLibrary: () -> Unit = {},
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
+  val singleField by viewModel.singleMessageField.collectAsStateWithLifecycle()
   var showSaveTemplateDialog by remember { mutableStateOf(false) }
   var showSavedTemplatesDialog by remember { mutableStateOf(false) }
-  var templateTitle by remember { mutableStateOf("") }
+  var showSearchReplaceDialog by remember { mutableStateOf(false) }
   val repeatTemplates = remember(state.savedLists) {
     state.savedLists.filter { !it.isMultipleMode }
   }
@@ -126,12 +128,12 @@ fun RepetitionConfigScreen(
           }
           Spacer(modifier = Modifier.height(10.dp))
           OutlinedTextField(
-            value = state.singleMessage,
-            onValueChange = viewModel::onSingleMessageChanged,
+            value = singleField,
+            onValueChange = viewModel::onSingleMessageFieldChanged,
             modifier = Modifier.fillMaxWidth(),
             placeholder = { Text("Escribe el mensaje exacto que deseas repetir...", color = TextSecondary) },
             minLines = 3,
-            maxLines = 5,
+            maxLines = 6,
             shape = RoundedCornerShape(14.dp),
             colors = OutlinedTextFieldDefaults.colors(
               focusedContainerColor = CardSurfaceElevated,
@@ -142,23 +144,33 @@ fun RepetitionConfigScreen(
               unfocusedTextColor = TextPrimary,
             ),
           )
+          SmartEditorToolkit(
+            rawText = singleField.text,
+            livePreviewText = state.livePreviewText,
+            variableError = state.variableError,
+            detectedLinksCount = state.detectedLinksCount,
+            canUndo = state.canUndo,
+            canRedo = state.canRedo,
+            onFormatMarkdown = viewModel::applySingleMessageFormatting,
+            onInsertSnippet = viewModel::insertSnippetInSingleMessage,
+            onUndo = { viewModel.undoActiveEditor(isMultiple = false) },
+            onRedo = { viewModel.redoActiveEditor(isMultiple = false) },
+            onOpenSearchReplace = { showSearchReplaceDialog = true },
+          )
           Spacer(modifier = Modifier.height(8.dp))
           Row(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.fillMaxWidth(),
           ) {
-            TextButton(onClick = { showSavedTemplatesDialog = true }) {
+            TextButton(onClick = onOpenLibrary) {
               Icon(Icons.Rounded.Bookmarks, contentDescription = null, tint = WhatsAppGreen, modifier = Modifier.size(16.dp))
               Spacer(modifier = Modifier.width(4.dp))
-              Text("Plantillas (${repeatTemplates.size})", color = WhatsAppGreen)
+              Text("Biblioteca (${state.savedLists.size})", color = WhatsAppGreen)
             }
             if (state.singleMessage.isNotBlank()) {
               TextButton(
-                onClick = {
-                  templateTitle = ""
-                  showSaveTemplateDialog = true
-                },
+                onClick = { showSaveTemplateDialog = true },
               ) {
                 Icon(Icons.Rounded.BookmarkAdd, contentDescription = null, tint = WhatsAppGreen, modifier = Modifier.size(16.dp))
                 Spacer(modifier = Modifier.width(4.dp))
@@ -352,42 +364,21 @@ fun RepetitionConfigScreen(
   }
 
   if (showSaveTemplateDialog) {
-    AlertDialog(
-      onDismissRequest = { showSaveTemplateDialog = false },
-      containerColor = CardSurface,
-      titleContentColor = TextPrimary,
-      title = { Text("Guardar plantilla de repetición") },
-      text = {
-        OutlinedTextField(
-          value = templateTitle,
-          onValueChange = { templateTitle = it.take(48) },
-          label = { Text("Nombre de la plantilla") },
-          singleLine = true,
-          colors = OutlinedTextFieldDefaults.colors(
-            focusedBorderColor = WhatsAppGreen,
-            unfocusedBorderColor = OutlineSubtle,
-            focusedTextColor = TextPrimary,
-            unfocusedTextColor = TextPrimary,
-          ),
-        )
+    SaveTemplateMetadataDialog(
+      dialogTitle = "Guardar plantilla en Biblioteca",
+      onDismiss = { showSaveTemplateDialog = false },
+      onConfirm = { title, category, tags, isFav ->
+        viewModel.saveCurrentAsTemplate(title, category, tags, isFav)
       },
-      confirmButton = {
-        TextButton(
-          enabled = templateTitle.isNotBlank(),
-          onClick = {
-            if (templateTitle.isNotBlank()) {
-              viewModel.saveCurrentAsTemplate(templateTitle)
-              showSaveTemplateDialog = false
-            }
-          },
-        ) {
-          Text("Guardar", color = if (templateTitle.isNotBlank()) WhatsAppGreen else TextSecondary, fontWeight = FontWeight.Bold)
-        }
-      },
-      dismissButton = {
-        TextButton(onClick = { showSaveTemplateDialog = false }) {
-          Text("Cancelar", color = TextSecondary)
-        }
+    )
+  }
+
+  if (showSearchReplaceDialog) {
+    SearchReplaceDialog(
+      supportsListReplace = false,
+      onDismiss = { showSearchReplaceDialog = false },
+      onApply = { find, replace, _ ->
+        viewModel.searchAndReplace(find, replace, isMultiple = false, applyToSavedList = false)
       },
     )
   }

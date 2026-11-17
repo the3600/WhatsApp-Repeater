@@ -18,6 +18,12 @@ data class SavedMessageListEntity(
   val singleMessage: String,
   val repeatCount: Int,
   val updatedAtMillis: Long,
+  val category: String = "General",
+  val tagsJson: String = "[]",
+  val isFavorite: Boolean = false,
+  val isPinned: Boolean = false,
+  val useCount: Int = 0,
+  val lastUsedAtMillis: Long = 0L,
 ) {
   fun toDomain(): SavedMessageList = SavedMessageList(
     id = id,
@@ -28,6 +34,13 @@ data class SavedMessageListEntity(
     singleMessage = singleMessage,
     repeatCount = repeatCount,
     updatedAtMillis = updatedAtMillis,
+    category = category.ifBlank { "General" },
+    tags = runCatching { jsonCodec.decodeFromString<List<String>>(tagsJson) }
+      .getOrDefault(emptyList()),
+    isFavorite = isFavorite,
+    isPinned = isPinned,
+    useCount = useCount,
+    lastUsedAtMillis = lastUsedAtMillis,
   )
 
   companion object {
@@ -39,6 +52,12 @@ data class SavedMessageListEntity(
       singleMessage = model.singleMessage,
       repeatCount = model.repeatCount,
       updatedAtMillis = model.updatedAtMillis,
+      category = model.category.ifBlank { "General" },
+      tagsJson = jsonCodec.encodeToString(model.tags),
+      isFavorite = model.isFavorite,
+      isPinned = model.isPinned,
+      useCount = model.useCount,
+      lastUsedAtMillis = model.lastUsedAtMillis,
     )
   }
 }

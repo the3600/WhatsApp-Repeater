@@ -13,6 +13,9 @@ import com.whatsapprepeater.core.model.MessageTraceStatus
 import com.whatsapprepeater.core.model.PersistedAutomationDraft
 import com.whatsapprepeater.core.model.RuleMatchType
 import com.whatsapprepeater.core.model.SavedMessageList
+import com.whatsapprepeater.core.model.ScheduledTask
+import com.whatsapprepeater.core.model.ScheduledTaskStatus
+import com.whatsapprepeater.core.model.SchedulerRecurrence
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -27,7 +30,7 @@ import javax.crypto.spec.SecretKeySpec
 
 @Serializable
 data class BackupPayload(
-  val schemaVersion: Int = 1,
+  val schemaVersion: Int = 2,
   val exportedAtMillis: Long,
   val settings: BackupSettingsDto,
   val savedLists: List<BackupSavedListDto>,
@@ -35,6 +38,29 @@ data class BackupPayload(
   val history: List<BackupHistoryDto>,
   val autoReplyRules: List<BackupAutoReplyRuleDto> = emptyList(),
   val autoReplySettings: BackupAutoReplySettingsDto? = null,
+  val scheduledTasks: List<BackupScheduledTaskDto> = emptyList(),
+)
+
+@Serializable
+data class BackupScheduledTaskDto(
+  val title: String,
+  val contactId: String = "",
+  val contactName: String,
+  val contactPhone: String,
+  val isMultipleMode: Boolean,
+  val messages: List<String> = emptyList(),
+  val singleMessage: String = "",
+  val repeatCount: Int = 1,
+  val minIntervalSeconds: Int = 15,
+  val maxIntervalSeconds: Int = 35,
+  val preferWhatsAppBusiness: Boolean = false,
+  val triggerAtMillis: Long,
+  val recurrence: String = "NONE",
+  val expirationMillis: Long? = null,
+  val enabled: Boolean = true,
+  val notifyBeforeMinutes: Int = 5,
+  val createdAtMillis: Long = 0L,
+  val updatedAtMillis: Long = 0L,
 )
 
 @Serializable
@@ -96,6 +122,7 @@ data class BackupSettingsDto(
   val preferWhatsAppBusiness: Boolean,
   val hapticFeedbackEnabled: Boolean,
   val keepScreenOnDuringAutomation: Boolean,
+  val vacationPauseEnabled: Boolean = false,
   val githubRepoOwner: String,
   val githubRepoName: String,
 )
@@ -108,6 +135,12 @@ data class BackupSavedListDto(
   val singleMessage: String,
   val repeatCount: Int,
   val updatedAtMillis: Long,
+  val category: String = "General",
+  val tags: List<String> = emptyList(),
+  val isFavorite: Boolean = false,
+  val isPinned: Boolean = false,
+  val useCount: Int = 0,
+  val lastUsedAtMillis: Long = 0L,
 )
 
 @Serializable
@@ -186,6 +219,7 @@ object LocalBackupManager {
     history: List<ExecutionRecord>,
     autoReplyRules: List<AutoReplyRule> = emptyList(),
     autoReplySettings: AutoReplySettings? = null,
+    scheduledTasks: List<ScheduledTask> = emptyList(),
   ): String {
     require(passphrase.length >= 4) { "La clave de respaldo debe tener al menos 4 caracteres." }
 
@@ -198,6 +232,7 @@ object LocalBackupManager {
         preferWhatsAppBusiness = settings.preferWhatsAppBusiness,
         hapticFeedbackEnabled = settings.hapticFeedbackEnabled,
         keepScreenOnDuringAutomation = settings.keepScreenOnDuringAutomation,
+        vacationPauseEnabled = settings.vacationPauseEnabled,
         githubRepoOwner = settings.githubRepoOwner,
         githubRepoName = settings.githubRepoName,
       ),
@@ -209,6 +244,12 @@ object LocalBackupManager {
           singleMessage = it.singleMessage,
           repeatCount = it.repeatCount,
           updatedAtMillis = it.updatedAtMillis,
+          category = it.category,
+          tags = it.tags,
+          isFavorite = it.isFavorite,
+          isPinned = it.isPinned,
+          useCount = it.useCount,
+          lastUsedAtMillis = it.lastUsedAtMillis,
         )
       },
       activeDraft = activeDraft?.let {
@@ -306,6 +347,28 @@ object LocalBackupManager {
           preventLoopsEnabled = s.preventLoopsEnabled,
           saveHistoryEnabled = s.saveHistoryEnabled,
           saveIncomingPreviewEnabled = s.saveIncomingPreviewEnabled,
+        )
+      },
+      scheduledTasks = scheduledTasks.map { t ->
+        BackupScheduledTaskDto(
+          title = t.title,
+          contactId = t.contactId,
+          contactName = t.contactName,
+          contactPhone = t.contactPhone,
+          isMultipleMode = t.isMultipleMode,
+          messages = t.messages,
+          singleMessage = t.singleMessage,
+          repeatCount = t.repeatCount,
+          minIntervalSeconds = t.minIntervalSeconds,
+          maxIntervalSeconds = t.maxIntervalSeconds,
+          preferWhatsAppBusiness = t.preferWhatsAppBusiness,
+          triggerAtMillis = t.triggerAtMillis,
+          recurrence = t.recurrence.name,
+          expirationMillis = t.expirationMillis,
+          enabled = t.enabled,
+          notifyBeforeMinutes = t.notifyBeforeMinutes,
+          createdAtMillis = t.createdAtMillis,
+          updatedAtMillis = t.updatedAtMillis,
         )
       },
     )
@@ -460,6 +523,32 @@ object LocalBackupManager {
     saveHistoryEnabled = dto.saveHistoryEnabled,
     saveIncomingPreviewEnabled = dto.saveIncomingPreviewEnabled,
   )
+
+  fun toScheduledTasks(items: List<BackupScheduledTaskDto>): List<ScheduledTask> =
+    items.map { dto ->
+      ScheduledTask(
+        title = dto.title,
+        contactId = dto.contactId,
+        contactName = dto.contactName,
+        contactPhone = dto.contactPhone,
+        isMultipleMode = dto.isMultipleMode,
+        messages = dto.messages,
+        singleMessage = dto.singleMessage,
+        repeatCount = dto.repeatCount,
+        minIntervalSeconds = dto.minIntervalSeconds,
+        maxIntervalSeconds = dto.maxIntervalSeconds,
+        preferWhatsAppBusiness = dto.preferWhatsAppBusiness,
+        triggerAtMillis = dto.triggerAtMillis,
+        recurrence = runCatching { SchedulerRecurrence.valueOf(dto.recurrence) }
+          .getOrDefault(SchedulerRecurrence.NONE),
+        expirationMillis = dto.expirationMillis,
+        enabled = dto.enabled,
+        notifyBeforeMinutes = dto.notifyBeforeMinutes,
+        status = ScheduledTaskStatus.PENDING,
+        createdAtMillis = dto.createdAtMillis,
+        updatedAtMillis = dto.updatedAtMillis,
+      )
+    }
 
   private fun deriveAesKey(passphrase: String, salt: ByteArray): SecretKeySpec {
     val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")

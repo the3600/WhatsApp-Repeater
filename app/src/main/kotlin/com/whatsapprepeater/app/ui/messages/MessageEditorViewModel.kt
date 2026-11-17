@@ -1,15 +1,21 @@
 package com.whatsapprepeater.app.ui.messages
 
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.whatsapprepeater.app.AppContainer
+import com.whatsapprepeater.core.model.ContactInfo
+import com.whatsapprepeater.core.model.DynamicVariablesEngine
 import com.whatsapprepeater.core.model.SafetyLimits
 import com.whatsapprepeater.core.model.SavedMessageList
+import com.whatsapprepeater.core.model.VariableResolutionResult
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -24,12 +30,20 @@ data class MessageEditorUiState(
   val maxRepeatAllowed: Int = SafetyLimits.DEFAULT_MAX_REPEAT_COUNT,
   val savedLists: List<SavedMessageList> = emptyList(),
   val validationError: String? = null,
+  val selectedContact: ContactInfo? = null,
+  val livePreviewText: String = "",
+  val variableError: String? = null,
+  val detectedLinksCount: Int = 0,
+  val canUndo: Boolean = false,
+  val canRedo: Boolean = false,
 ) {
   val canProceedMultiple: Boolean
     get() = multipleMessages.any { it.isNotBlank() }
 
   val canProceedRepeat: Boolean
-    get() = singleMessage.isNotBlank() && repeatCount in SafetyLimits.MIN_REPEAT_COUNT..maxRepeatAllowed
+    get() = singleMessage.isNotBlank() &&
+      repeatCount in SafetyLimits.MIN_REPEAT_COUNT..maxRepeatAllowed &&
+      variableError == null
 
   val canProceed: Boolean
     get() = if (isMultipleMode) canProceedMultiple else canProceedRepeat
@@ -40,7 +54,32 @@ class MessageEditorViewModel(
 ) : ViewModel() {
 
   private val newMessageInput = MutableStateFlow("")
+  private val _newMessageField = MutableStateFlow(TextFieldValue(""))
+  val newMessageField: StateFlow<TextFieldValue> = _newMessageField.asStateFlow()
+
+  private val _singleMessageField = MutableStateFlow(
+    TextFieldValue(container.draft.value.singleMessage, TextRange(container.draft.value.singleMessage.length)),
+  )
+  val singleMessageField: StateFlow<TextFieldValue> = _singleMessageField.asStateFlow()
+
   private val validationError = MutableStateFlow<String?>(null)
+  private val historyVersion = MutableStateFlow(0)
+
+  private val undoStack = ArrayDeque<TextFieldValue>()
+  private val redoStack = ArrayDeque<TextFieldValue>()
+  private val singleUndoStack = ArrayDeque<TextFieldValue>()
+  private val singleRedoStack = ArrayDeque<TextFieldValue>()
+
+  init {
+    viewModelScope.launch {
+      container.draft.collect { draft ->
+        if (draft.singleMessage != _singleMessageField.value.text) {
+          val clamped = draft.singleMessage.take(SafetyLimits.MAX_MESSAGE_LENGTH)
+          _singleMessageField.value = TextFieldValue(clamped, TextRange(clamped.length))
+        }
+      }
+    }
+  }
 
   val uiState: StateFlow<MessageEditorUiState> = combine(
     container.draft,
@@ -48,7 +87,29 @@ class MessageEditorViewModel(
     container.savedConfigRepository.observeSavedMessageLists(),
     newMessageInput,
     validationError,
-  ) { draft, settings, savedLists, newMsg, error ->
+    historyVersion,
+  ) { values ->
+    val draft = values[0] as com.whatsapprepeater.app.AutomationDraft
+    val settings = values[1] as com.whatsapprepeater.core.model.AppSettings
+    @Suppress("UNCHECKED_CAST")
+    val savedLists = values[2] as List<SavedMessageList>
+    val newMsg = values[3] as String
+    val error = values[4] as String?
+
+    val activeText = if (draft.isMultipleMode) newMsg else draft.singleMessage
+    val resolution = DynamicVariablesEngine.resolveOrValidate(activeText, draft.selectedContact)
+    val preview = when (resolution) {
+      is VariableResolutionResult.Resolved -> resolution.text
+      is VariableResolutionResult.Unresolved -> activeText
+    }
+    val batchVarError = if (draft.isMultipleMode) {
+      DynamicVariablesEngine.validateBatch(draft.multipleMessages, draft.selectedContact).second?.reason
+    } else {
+      (resolution as? VariableResolutionResult.Unresolved)?.reason
+    }
+    val canUndoNow = if (draft.isMultipleMode) undoStack.isNotEmpty() else singleUndoStack.isNotEmpty()
+    val canRedoNow = if (draft.isMultipleMode) redoStack.isNotEmpty() else singleRedoStack.isNotEmpty()
+
     MessageEditorUiState(
       isMultipleMode = draft.isMultipleMode,
       multipleMessages = draft.multipleMessages,
@@ -58,6 +119,12 @@ class MessageEditorViewModel(
       maxRepeatAllowed = settings.maxRepeatCount,
       savedLists = savedLists,
       validationError = error,
+      selectedContact = draft.selectedContact,
+      livePreviewText = preview,
+      variableError = batchVarError ?: (resolution as? VariableResolutionResult.Unresolved)?.reason,
+      detectedLinksCount = detectUrls(activeText).size,
+      canUndo = canUndoNow,
+      canRedo = canRedoNow,
     )
   }.stateIn(
     scope = viewModelScope,
@@ -70,14 +137,138 @@ class MessageEditorViewModel(
     container.updateDraft { it.copy(isMultipleMode = multiple) }
   }
 
-  fun onNewMessageInputChanged(text: String) {
+  fun onNewMessageFieldChanged(value: TextFieldValue) {
     validationError.value = null
-    newMessageInput.value = text.take(SafetyLimits.MAX_MESSAGE_LENGTH)
+    val cappedText = value.text.take(SafetyLimits.MAX_MESSAGE_LENGTH)
+    val capped = if (cappedText.length != value.text.length) {
+      val maxIdx = cappedText.length
+      TextFieldValue(
+        text = cappedText,
+        selection = TextRange(value.selection.start.coerceAtMost(maxIdx), value.selection.end.coerceAtMost(maxIdx)),
+      )
+    } else {
+      value
+    }
+    val prev = _newMessageField.value
+    if (prev.text != capped.text) {
+      pushHistory(undoStack, redoStack, prev)
+    }
+    _newMessageField.value = capped
+    newMessageInput.value = capped.text
+    historyVersion.value += 1
+  }
+
+  fun onNewMessageInputChanged(text: String) {
+    val capped = text.take(SafetyLimits.MAX_MESSAGE_LENGTH)
+    onNewMessageFieldChanged(TextFieldValue(capped, TextRange(capped.length)))
   }
 
   fun wrapOrAppendFormatting(marker: String) {
-    newMessageInput.value = formatMessageSnippet(newMessageInput.value, marker)
-      .take(SafetyLimits.MAX_MESSAGE_LENGTH)
+    val currentField = _newMessageField.value
+    val formatted = applyMarkdownToSelection(currentField, marker)
+    onNewMessageFieldChanged(formatted)
+  }
+
+  fun applySingleMessageFormatting(marker: String) {
+    val currentField = _singleMessageField.value
+    val formatted = applyMarkdownToSelection(currentField, marker)
+    onSingleMessageFieldChanged(formatted)
+  }
+
+  fun insertSnippetInComposer(snippet: String) {
+    val updated = insertTextAtCursor(_newMessageField.value, snippet)
+    onNewMessageFieldChanged(updated)
+  }
+
+  fun insertSnippetInSingleMessage(snippet: String) {
+    val updated = insertTextAtCursor(_singleMessageField.value, snippet)
+    onSingleMessageFieldChanged(updated)
+  }
+
+  fun undoActiveEditor(isMultiple: Boolean) {
+    if (isMultiple) {
+      if (undoStack.isEmpty()) return
+      val current = _newMessageField.value
+      redoStack.addLast(current)
+      val restored = undoStack.removeLast()
+      _newMessageField.value = restored
+      newMessageInput.value = restored.text
+    } else {
+      if (singleUndoStack.isEmpty()) return
+      val current = _singleMessageField.value
+      singleRedoStack.addLast(current)
+      val restored = singleUndoStack.removeLast()
+      _singleMessageField.value = restored
+      container.updateDraft { it.copy(singleMessage = restored.text) }
+    }
+    historyVersion.value += 1
+  }
+
+  fun redoActiveEditor(isMultiple: Boolean) {
+    if (isMultiple) {
+      if (redoStack.isEmpty()) return
+      val current = _newMessageField.value
+      undoStack.addLast(current)
+      val restored = redoStack.removeLast()
+      _newMessageField.value = restored
+      newMessageInput.value = restored.text
+    } else {
+      if (singleRedoStack.isEmpty()) return
+      val current = _singleMessageField.value
+      singleUndoStack.addLast(current)
+      val restored = singleRedoStack.removeLast()
+      _singleMessageField.value = restored
+      container.updateDraft { it.copy(singleMessage = restored.text) }
+    }
+    historyVersion.value += 1
+  }
+
+  fun searchAndReplace(find: String, replace: String, isMultiple: Boolean, applyToSavedList: Boolean): Int {
+    if (find.isEmpty()) return 0
+    var count = 0
+    if (isMultiple) {
+      val current = _newMessageField.value.text
+      if (current.contains(find)) {
+        val matches = current.split(find).size - 1
+        count += matches
+        val next = current.replace(find, replace).take(SafetyLimits.MAX_MESSAGE_LENGTH)
+        onNewMessageFieldChanged(TextFieldValue(next, TextRange(next.length)))
+      }
+      if (applyToSavedList) {
+        container.updateDraft { draft ->
+          val updatedList = draft.multipleMessages.map { msg ->
+            if (msg.contains(find)) {
+              count += msg.split(find).size - 1
+              msg.replace(find, replace).take(SafetyLimits.MAX_MESSAGE_LENGTH)
+            } else {
+              msg
+            }
+          }
+          draft.copy(multipleMessages = updatedList)
+        }
+      }
+    } else {
+      val current = _singleMessageField.value.text
+      if (current.contains(find)) {
+        count += current.split(find).size - 1
+        val next = current.replace(find, replace).take(SafetyLimits.MAX_MESSAGE_LENGTH)
+        onSingleMessageFieldChanged(TextFieldValue(next, TextRange(next.length)))
+      }
+    }
+    return count
+  }
+
+  fun duplicateMessageAt(index: Int) {
+    container.updateDraft { draft ->
+      if (index !in draft.multipleMessages.indices) return@updateDraft draft
+      if (draft.multipleMessages.size >= SafetyLimits.MAX_MULTIPLE_MESSAGES_LIMIT) {
+        validationError.value = "Límite máximo de ${SafetyLimits.MAX_MULTIPLE_MESSAGES_LIMIT} mensajes."
+        return@updateDraft draft
+      }
+      val mutable = draft.multipleMessages.toMutableList()
+      mutable.add(index + 1, mutable[index])
+      draft.copy(multipleMessages = mutable)
+    }
   }
 
   fun addMessageToList() {
@@ -91,9 +282,18 @@ class MessageEditorViewModel(
       validationError.value = "Límite máximo de ${SafetyLimits.MAX_MULTIPLE_MESSAGES_LIMIT} mensajes."
       return
     }
+    val varCheck = DynamicVariablesEngine.resolveOrValidate(cleaned, container.draft.value.selectedContact)
+    if (varCheck is VariableResolutionResult.Unresolved) {
+      validationError.value = varCheck.reason
+      return
+    }
     container.updateDraft { it.copy(multipleMessages = currentList + cleaned) }
+    undoStack.clear()
+    redoStack.clear()
+    _newMessageField.value = TextFieldValue("")
     newMessageInput.value = ""
     validationError.value = null
+    historyVersion.value += 1
   }
 
   fun editMessageAt(index: Int, updatedText: String) {
@@ -142,9 +342,30 @@ class MessageEditorViewModel(
     }
   }
 
-  fun onSingleMessageChanged(text: String) {
+  fun onSingleMessageFieldChanged(value: TextFieldValue) {
     validationError.value = null
-    container.updateDraft { it.copy(singleMessage = text.take(SafetyLimits.MAX_MESSAGE_LENGTH)) }
+    val cappedText = value.text.take(SafetyLimits.MAX_MESSAGE_LENGTH)
+    val capped = if (cappedText.length != value.text.length) {
+      val maxIdx = cappedText.length
+      TextFieldValue(
+        text = cappedText,
+        selection = TextRange(value.selection.start.coerceAtMost(maxIdx), value.selection.end.coerceAtMost(maxIdx)),
+      )
+    } else {
+      value
+    }
+    val prev = _singleMessageField.value
+    if (prev.text != capped.text) {
+      pushHistory(singleUndoStack, singleRedoStack, prev)
+    }
+    _singleMessageField.value = capped
+    container.updateDraft { it.copy(singleMessage = capped.text) }
+    historyVersion.value += 1
+  }
+
+  fun onSingleMessageChanged(text: String) {
+    val capped = text.take(SafetyLimits.MAX_MESSAGE_LENGTH)
+    onSingleMessageFieldChanged(TextFieldValue(capped, TextRange(capped.length)))
   }
 
   fun onRepeatCountChanged(count: Int) {
@@ -180,7 +401,12 @@ class MessageEditorViewModel(
     }
   }
 
-  fun saveCurrentAsTemplate(title: String) {
+  fun saveCurrentAsTemplate(
+    title: String,
+    category: String = "General",
+    tags: List<String> = emptyList(),
+    isFavorite: Boolean = false,
+  ) {
     val cleanTitle = title.trim()
     if (cleanTitle.isEmpty()) return
     val current = container.draft.value
@@ -194,6 +420,9 @@ class MessageEditorViewModel(
             singleMessage = current.singleMessage,
             repeatCount = current.repeatCount,
             updatedAtMillis = System.currentTimeMillis(),
+            category = category.trim().ifBlank { "General" },
+            tags = tags.map { it.trim() }.filter { it.isNotEmpty() }.distinct(),
+            isFavorite = isFavorite,
           ),
         )
       }
@@ -210,14 +439,7 @@ class MessageEditorViewModel(
         }
       }
     }
-    container.updateDraft {
-      it.copy(
-        isMultipleMode = template.isMultipleMode,
-        multipleMessages = template.messages,
-        singleMessage = template.singleMessage,
-        repeatCount = template.repeatCount.coerceIn(SafetyLimits.MIN_REPEAT_COUNT, targetLimit),
-      )
-    }
+    container.loadTemplateIntoDraft(template.copy(repeatCount = template.repeatCount.coerceIn(SafetyLimits.MIN_REPEAT_COUNT, targetLimit)))
   }
 
   fun deleteSavedTemplate(id: Long) {
@@ -228,7 +450,58 @@ class MessageEditorViewModel(
     }
   }
 
+  private fun pushHistory(
+    undo: ArrayDeque<TextFieldValue>,
+    redo: ArrayDeque<TextFieldValue>,
+    snapshot: TextFieldValue,
+  ) {
+    if (undo.lastOrNull()?.text == snapshot.text) return
+    undo.addLast(snapshot)
+    while (undo.size > MAX_UNDO_HISTORY) {
+      undo.removeFirst()
+    }
+    redo.clear()
+  }
+
   companion object {
+    private const val MAX_UNDO_HISTORY = 30
+    private val urlRegex = Regex("https?://[^\\s]+", RegexOption.IGNORE_CASE)
+
+    fun detectUrls(text: String): List<String> =
+      urlRegex.findAll(text).map { it.value }.toList()
+
+    fun applyMarkdownToSelection(field: TextFieldValue, marker: String): TextFieldValue {
+      val text = field.text
+      val selStart = field.selection.min.coerceIn(0, text.length)
+      val selEnd = field.selection.max.coerceIn(selStart, text.length)
+      return if (selStart == selEnd) {
+        val inserted = "${marker}texto$marker"
+        val updated = (text.substring(0, selStart) + inserted + text.substring(selEnd))
+          .take(SafetyLimits.MAX_MESSAGE_LENGTH)
+        val innerStart = (selStart + marker.length).coerceAtMost(updated.length)
+        val innerEnd = (innerStart + 5).coerceAtMost(updated.length)
+        TextFieldValue(updated, TextRange(innerStart, innerEnd))
+      } else {
+        val selected = text.substring(selStart, selEnd)
+        val wrapped = "$marker$selected$marker"
+        val updated = (text.substring(0, selStart) + wrapped + text.substring(selEnd))
+          .take(SafetyLimits.MAX_MESSAGE_LENGTH)
+        val newStart = (selStart + marker.length).coerceAtMost(updated.length)
+        val newEnd = (selEnd + marker.length).coerceAtMost(updated.length)
+        TextFieldValue(updated, TextRange(newStart, newEnd))
+      }
+    }
+
+    fun insertTextAtCursor(field: TextFieldValue, snippet: String): TextFieldValue {
+      val text = field.text
+      val start = field.selection.min.coerceIn(0, text.length)
+      val end = field.selection.max.coerceIn(start, text.length)
+      val updated = (text.substring(0, start) + snippet + text.substring(end))
+        .take(SafetyLimits.MAX_MESSAGE_LENGTH)
+      val cursor = (start + snippet.length).coerceAtMost(updated.length)
+      return TextFieldValue(updated, TextRange(cursor))
+    }
+
     internal fun formatMessageSnippet(current: String, marker: String): String = when {
       current.isBlank() -> "${marker}texto$marker"
       current.endsWith(" ") || current.endsWith("\n") -> "$current${marker}texto$marker"

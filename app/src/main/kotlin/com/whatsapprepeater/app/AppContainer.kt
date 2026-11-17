@@ -5,6 +5,7 @@ import android.content.Context
 import androidx.room.Room
 import com.whatsapprepeater.app.autoreply.AutoReplyCoordinator
 import com.whatsapprepeater.app.autoreply.AutoReplyNotificationHelper
+import com.whatsapprepeater.app.scheduler.SchedulerAlarmHelper
 import com.whatsapprepeater.app.service.AndroidAccessibilityDriver
 import com.whatsapprepeater.app.service.AutomationNotificationHelper
 import com.whatsapprepeater.app.updater.UpdateManager
@@ -21,7 +22,9 @@ import com.whatsapprepeater.core.data.repository.HistoryRepository
 import com.whatsapprepeater.core.data.repository.RoomAutoReplyRepository
 import com.whatsapprepeater.core.data.repository.RoomHistoryRepository
 import com.whatsapprepeater.core.data.repository.RoomSavedConfigRepository
+import com.whatsapprepeater.core.data.repository.RoomScheduledTaskRepository
 import com.whatsapprepeater.core.data.repository.SavedConfigRepository
+import com.whatsapprepeater.core.data.repository.ScheduledTaskRepository
 import com.whatsapprepeater.core.data.repository.SettingsRepository
 import com.whatsapprepeater.core.model.AutomationConfig
 import com.whatsapprepeater.core.model.ContactInfo
@@ -29,6 +32,9 @@ import com.whatsapprepeater.core.model.IntervalRange
 import com.whatsapprepeater.core.model.MessageMode
 import com.whatsapprepeater.core.model.PersistedAutomationDraft
 import com.whatsapprepeater.core.model.SafetyLimits
+import com.whatsapprepeater.core.model.ScheduledTask
+import com.whatsapprepeater.core.model.ScheduledTaskStatus
+import com.whatsapprepeater.core.model.SavedMessageList
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -142,7 +148,12 @@ class AppContainer(context: Context) {
     AppDatabase::class.java,
     AppDatabase.DB_NAME,
   )
-    .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3, AppDatabase.MIGRATION_3_4)
+    .addMigrations(
+      AppDatabase.MIGRATION_1_2,
+      AppDatabase.MIGRATION_2_3,
+      AppDatabase.MIGRATION_3_4,
+      AppDatabase.MIGRATION_4_5,
+    )
     // Nunca usar fallbackToDestructiveMigration() para no borrar datos al actualizar.
     .build()
 
@@ -151,6 +162,7 @@ class AppContainer(context: Context) {
     savedMessageListDao = database.savedMessageListDao(),
     automationConfigDao = database.automationConfigDao(),
   )
+  val scheduledTaskRepository: ScheduledTaskRepository = RoomScheduledTaskRepository(database.scheduledTaskDao())
   val autoReplyRepository: AutoReplyRepository = RoomAutoReplyRepository(
     ruleDao = database.autoReplyRuleDao(),
     logDao = database.autoReplyLogDao(),
@@ -160,6 +172,7 @@ class AppContainer(context: Context) {
   val contactsRepository: ContactsRepository = AndroidContactsRepository(context)
   val accessibilityDriver = AndroidAccessibilityDriver(context)
   val updateManager = UpdateManager(context)
+  val schedulerAlarmHelper = SchedulerAlarmHelper(appContext)
   private val notificationHelper = AutomationNotificationHelper(context)
   private val autoReplyNotificationHelper = AutoReplyNotificationHelper(context)
 
@@ -182,6 +195,12 @@ class AppContainer(context: Context) {
 
   private val _draft = MutableStateFlow(AutomationDraft())
   val draft: StateFlow<AutomationDraft> = _draft.asStateFlow()
+
+  private val _pendingScheduleLaunch = MutableStateFlow<Long?>(null)
+  val pendingScheduleLaunch: StateFlow<Long?> = _pendingScheduleLaunch.asStateFlow()
+
+  @Volatile
+  private var activeScheduledTaskId: Long? = null
 
   private val draftPersistMutex = Mutex()
   @Volatile
@@ -245,6 +264,75 @@ class AppContainer(context: Context) {
     appScope.launch {
       draftPersistMutex.withLock {
         savedConfigRepository.saveActiveDraft(_draft.value.toPersisted())
+      }
+    }
+  }
+
+  fun requestOpenScheduledTask(taskId: Long) {
+    if (taskId > 0L) {
+      _pendingScheduleLaunch.value = taskId
+    }
+  }
+
+  fun clearPendingScheduledLaunch() {
+    _pendingScheduleLaunch.value = null
+  }
+
+  fun loadTemplateIntoDraft(template: SavedMessageList) {
+    activeScheduledTaskId = null
+    updateDraft { current ->
+      current.copy(
+        isMultipleMode = template.isMultipleMode,
+        multipleMessages = template.messages,
+        singleMessage = template.singleMessage,
+        repeatCount = template.repeatCount.coerceIn(SafetyLimits.MIN_REPEAT_COUNT, SafetyLimits.MAX_REPEAT_COUNT_HARD_LIMIT),
+      )
+    }
+    if (template.id > 0L) {
+      appScope.launch {
+        runCatching { savedConfigRepository.recordTemplateUsage(template.id) }
+      }
+    }
+  }
+
+  fun loadScheduledTaskIntoDraft(task: ScheduledTask) {
+    activeScheduledTaskId = task.id
+    val contact = ContactInfo(
+      id = task.contactId.ifBlank { "${task.contactName}_${task.contactPhone}" },
+      name = task.contactName,
+      phoneNumber = task.contactPhone,
+    )
+    updateDraft {
+      AutomationDraft(
+        selectedContact = contact,
+        isMultipleMode = task.isMultipleMode,
+        multipleMessages = task.messages,
+        singleMessage = task.singleMessage,
+        repeatCount = task.repeatCount,
+        minIntervalSeconds = task.minIntervalSeconds,
+        maxIntervalSeconds = task.maxIntervalSeconds,
+        preferWhatsAppBusiness = task.preferWhatsAppBusiness,
+      )
+    }
+  }
+
+  fun markActiveScheduledTaskStarted() {
+    val taskId = activeScheduledTaskId ?: return
+    activeScheduledTaskId = null
+    appScope.launch {
+      runCatching {
+        val task = scheduledTaskRepository.getById(taskId) ?: return@runCatching
+        val now = System.currentTimeMillis()
+        val deltaSeconds = ((now - task.triggerAtMillis) / 1000L)
+        scheduledTaskRepository.saveTask(
+          task.copy(
+            status = ScheduledTaskStatus.COMPLETED,
+            enabled = task.recurrence != com.whatsapprepeater.core.model.SchedulerRecurrence.NONE,
+            lastExecutedAtMillis = now,
+            lastPunctualityDeltaSeconds = deltaSeconds,
+            updatedAtMillis = now,
+          ),
+        )
       }
     }
   }

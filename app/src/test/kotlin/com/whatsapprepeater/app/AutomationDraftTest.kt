@@ -1,5 +1,7 @@
 package com.whatsapprepeater.app
 
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import com.whatsapprepeater.app.ui.automation.AutomationUiState
 import com.whatsapprepeater.app.ui.config.IntervalConfigUiState
 import com.whatsapprepeater.app.ui.contacts.ContactPickerUiState
@@ -125,5 +127,44 @@ class AutomationDraftTest {
     assertEquals("*Hola*", MessageEditorViewModel.formatMessageSnippet("Hola", "*"))
     assertEquals("Hola *texto*", MessageEditorViewModel.formatMessageSnippet("Hola ", "*"))
     assertEquals("*Hola* *texto*", MessageEditorViewModel.formatMessageSnippet("*Hola*", "*"))
+  }
+
+  @Test
+  fun `editor preserves text selection when applying markdown and detects urls`() {
+    val field = TextFieldValue("Hola mundo bonito", selection = TextRange(5, 10))
+    val bolded = MessageEditorViewModel.applyMarkdownToSelection(field, "*")
+    assertEquals("Hola *mundo* bonito", bolded.text)
+    // Selection stays anchored on "mundo" inside the markers
+    assertEquals("mundo", bolded.text.substring(bolded.selection.start, bolded.selection.end))
+
+    val inserted = MessageEditorViewModel.insertTextAtCursor(
+      TextFieldValue("Hola ", TextRange(5)),
+      "{nombre}",
+    )
+    assertEquals("Hola {nombre}", inserted.text)
+    assertEquals(TextRange(13), inserted.selection)
+
+    val urls = MessageEditorViewModel.detectUrls("Visita https://example.com/promo hoy")
+    assertEquals(listOf("https://example.com/promo"), urls)
+  }
+
+  @Test
+  fun `confirmation blocks start when dynamic variable cannot be resolved`() {
+    val draftWithUnknownVar = AutomationDraft(
+      selectedContact = ContactInfo("1", "Laura", "+573001112222"),
+      isMultipleMode = false,
+      singleMessage = "Hola {variable_falsa}",
+      repeatCount = 2,
+      minIntervalSeconds = 10,
+      maxIntervalSeconds = 20,
+    )
+    val state = AutomationUiState(
+      draft = draftWithUnknownVar,
+      isServiceConnected = true,
+      isWhatsAppInstalled = true,
+      userCheckboxConfirmed = true,
+    )
+    assertFalse(state.canStartAutomation)
+    assertTrue(state.variableValidationError!!.contains("{variable_falsa}"))
   }
 }

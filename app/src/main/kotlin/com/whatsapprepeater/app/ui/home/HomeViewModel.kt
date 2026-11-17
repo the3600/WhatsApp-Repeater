@@ -5,9 +5,14 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.whatsapprepeater.app.AppContainer
 import com.whatsapprepeater.app.AutomationDraft
+import com.whatsapprepeater.app.autoreply.AutoReplyRuntimeState
 import com.whatsapprepeater.core.model.AppSettings
+import com.whatsapprepeater.core.model.AutoReplySettings
 import com.whatsapprepeater.core.model.AutomationState
+import com.whatsapprepeater.core.model.DynamicVariablesEngine
 import com.whatsapprepeater.core.model.ExecutionRecord
+import com.whatsapprepeater.core.model.ScheduledTask
+import com.whatsapprepeater.core.model.ScheduledTaskStatus
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -23,6 +28,12 @@ data class HomeUiState(
   val activeAutomationState: AutomationState = AutomationState(),
   val settings: AppSettings = AppSettings(),
   val savedDraft: AutomationDraft = AutomationDraft(),
+  val autoReplySettings: AutoReplySettings = AutoReplySettings(),
+  val autoReplyRuntime: AutoReplyRuntimeState = AutoReplyRuntimeState(),
+  val nextScheduledTask: ScheduledTask? = null,
+  val failedSchedulesCount: Int = 0,
+  val savedTemplatesCount: Int = 0,
+  val canInstallUpdates: Boolean = false,
 ) {
   val isAccessibilityReady: Boolean
     get() = isServiceConnected || isServiceEnabledInSettings
@@ -31,6 +42,28 @@ data class HomeUiState(
     get() = savedDraft.selectedContact != null &&
       ((savedDraft.isMultipleMode && savedDraft.multipleMessages.isNotEmpty()) ||
         (!savedDraft.isMultipleMode && savedDraft.singleMessage.isNotBlank()))
+
+  val draftPendingMessagesCount: Int
+    get() = if (savedDraft.isMultipleMode) {
+      savedDraft.multipleMessages.count { it.isNotBlank() }
+    } else if (savedDraft.singleMessage.isNotBlank()) {
+      savedDraft.repeatCount
+    } else {
+      0
+    }
+
+  val attentionAlertsCount: Int
+    get() {
+      var count = 0
+      if (!isAccessibilityReady) count++
+      if (!isWhatsAppInstalled) count++
+      if (failedSchedulesCount > 0) count++
+      if (hasSavedDraft) {
+        val msgs = if (savedDraft.isMultipleMode) savedDraft.multipleMessages else listOf(savedDraft.singleMessage)
+        if (DynamicVariablesEngine.validateBatch(msgs, savedDraft.selectedContact).second != null) count++
+      }
+      return count
+    }
 }
 
 class HomeViewModel(
@@ -39,25 +72,71 @@ class HomeViewModel(
 
   private val settingsEnabledFlag = MutableStateFlow(false)
   private val whatsappInstalledFlag = MutableStateFlow(container.accessibilityDriver.isWhatsAppInstalled())
+  private val canInstallUpdatesFlag = MutableStateFlow(container.updateManager.canRequestPackageInstalls())
 
-  val uiState: StateFlow<HomeUiState> = combine(
+  private val systemStatusFlow = combine(
     container.accessibilityDriver.isServiceConnected,
     settingsEnabledFlag,
     whatsappInstalledFlag,
+    canInstallUpdatesFlag,
+  ) { a11yConn, a11ySettings, waInstalled, canInstall ->
+    listOf(a11yConn, a11ySettings, waInstalled, canInstall)
+  }
+
+  private val controlDataFlow = combine(
+    container.autoReplySettingsRepository.settings,
+    container.autoReplyCoordinator.runtimeState,
+    container.scheduledTaskRepository.observeTasks(),
+    container.savedConfigRepository.observeSavedMessageLists(),
+  ) { autoSettings, autoRuntime, tasks, templates ->
+    listOf(autoSettings, autoRuntime, tasks, templates)
+  }
+
+  val uiState: StateFlow<HomeUiState> = combine(
+    systemStatusFlow,
     container.historyRepository.observeRecentExecutions(limit = 15),
     container.automationEngine.state,
     container.settingsRepository.settings,
     container.draft,
+    controlDataFlow,
   ) { values ->
     @Suppress("UNCHECKED_CAST")
+    val sys = values[0] as List<Boolean>
+    @Suppress("UNCHECKED_CAST")
+    val history = values[1] as List<ExecutionRecord>
+    val activeState = values[2] as AutomationState
+    val settings = values[3] as AppSettings
+    val draft = values[4] as AutomationDraft
+    @Suppress("UNCHECKED_CAST")
+    val ctrl = values[5] as List<Any>
+    val autoSettings = ctrl[0] as AutoReplySettings
+    val autoRuntime = ctrl[1] as AutoReplyRuntimeState
+    @Suppress("UNCHECKED_CAST")
+    val tasks = ctrl[2] as List<ScheduledTask>
+    @Suppress("UNCHECKED_CAST")
+    val templates = ctrl[3] as List<com.whatsapprepeater.core.model.SavedMessageList>
+
+    val nextTask = tasks
+      .filter { it.enabled && it.status != ScheduledTaskStatus.EXPIRED && it.status != ScheduledTaskStatus.FAILED }
+      .minByOrNull { it.triggerAtMillis }
+    val failedOrExpired = tasks.count {
+      it.status == ScheduledTaskStatus.FAILED || it.status == ScheduledTaskStatus.EXPIRED
+    }
+
     HomeUiState(
-      isServiceConnected = values[0] as Boolean,
-      isServiceEnabledInSettings = values[1] as Boolean,
-      isWhatsAppInstalled = values[2] as Boolean,
-      recentExecutions = values[3] as List<ExecutionRecord>,
-      activeAutomationState = values[4] as AutomationState,
-      settings = values[5] as AppSettings,
-      savedDraft = values[6] as AutomationDraft,
+      isServiceConnected = sys[0],
+      isServiceEnabledInSettings = sys[1],
+      isWhatsAppInstalled = sys[2],
+      canInstallUpdates = sys[3],
+      recentExecutions = history,
+      activeAutomationState = activeState,
+      settings = settings,
+      savedDraft = draft,
+      autoReplySettings = autoSettings,
+      autoReplyRuntime = autoRuntime,
+      nextScheduledTask = nextTask,
+      failedSchedulesCount = failedOrExpired,
+      savedTemplatesCount = templates.size,
     )
   }.stateIn(
     scope = viewModelScope,
@@ -68,6 +147,7 @@ class HomeViewModel(
   fun refreshSystemStatus(isEnabledInSystemSettings: Boolean) {
     settingsEnabledFlag.value = isEnabledInSystemSettings
     whatsappInstalledFlag.value = container.accessibilityDriver.isWhatsAppInstalled()
+    canInstallUpdatesFlag.value = container.updateManager.canRequestPackageInstalls()
   }
 
   fun prepareNewAutomation() {

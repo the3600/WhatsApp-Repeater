@@ -14,6 +14,8 @@ import com.whatsapprepeater.core.model.ExecutionFinalStatus
 import com.whatsapprepeater.core.model.ExecutionRecord
 import com.whatsapprepeater.core.model.RuleMatchType
 import com.whatsapprepeater.core.model.SavedMessageList
+import com.whatsapprepeater.core.model.ScheduledTask
+import com.whatsapprepeater.core.model.SchedulerRecurrence
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -80,6 +82,16 @@ class DatabaseMigrationTest {
         AppDatabase.MIGRATION_1_2.migrate(proxyDb)
         AppDatabase.MIGRATION_2_3.migrate(proxyDb)
         AppDatabase.MIGRATION_3_4.migrate(proxyDb)
+
+        stmt.execute(
+          """
+          INSERT INTO `saved_message_lists`
+          (`title`, `isMultipleMode`, `messagesJson`, `singleMessage`, `repeatCount`, `updatedAtMillis`)
+          VALUES ('Seguimiento clientes', 1, '["Hola","¿Pudiste revisar?"]', '', 1, 1700000001000)
+          """.trimIndent(),
+        )
+
+        AppDatabase.MIGRATION_4_5.migrate(proxyDb)
         stmt.execute("PRAGMA user_version = ${AppDatabase.CURRENT_VERSION}")
 
         stmt.executeQuery("SELECT contactName, confirmedCount, batchCode, messageTracesJson FROM execution_history").use { rs ->
@@ -103,16 +115,25 @@ class DatabaseMigrationTest {
           assertEquals("precio", rs.getString(2))
         }
 
-        stmt.execute(
-          """
-          INSERT INTO `saved_message_lists`
-          (`title`, `isMultipleMode`, `messagesJson`, `singleMessage`, `repeatCount`, `updatedAtMillis`)
-          VALUES ('Seguimiento clientes', 1, '["Hola","¿Pudiste revisar?"]', '', 1, 1700000001000)
-          """.trimIndent(),
-        )
-        stmt.executeQuery("SELECT title FROM saved_message_lists").use { rs ->
+        stmt.executeQuery("SELECT title, category, useCount, isFavorite FROM saved_message_lists").use { rs ->
           assertTrue(rs.next())
           assertEquals("Seguimiento clientes", rs.getString(1))
+          assertEquals("General", rs.getString(2))
+          assertEquals(0, rs.getInt(3))
+          assertEquals(0, rs.getInt(4))
+        }
+
+        stmt.execute(
+          """
+          INSERT INTO `scheduled_tasks`
+          (`title`, `contactId`, `contactName`, `contactPhone`, `isMultipleMode`, `messagesJson`, `singleMessage`, `repeatCount`, `minIntervalSeconds`, `maxIntervalSeconds`, `preferWhatsAppBusiness`, `triggerAtMillis`, `recurrence`, `expirationMillis`, `enabled`, `notifyBeforeMinutes`, `status`, `lastExecutedAtMillis`, `lastPunctualityDeltaSeconds`, `createdAtMillis`, `updatedAtMillis`)
+          VALUES ('Recordatorio', '1', 'Laura', '+573001112222', 0, '[]', 'Hola', 1, 15, 30, 0, 1700010000000, 'DAILY', NULL, 1, 5, 'PENDING', 0, 0, 1700000000000, 1700000000000)
+          """.trimIndent(),
+        )
+        stmt.executeQuery("SELECT title, recurrence FROM scheduled_tasks").use { rs ->
+          assertTrue(rs.next())
+          assertEquals("Recordatorio", rs.getString(1))
+          assertEquals("DAILY", rs.getString(2))
         }
       }
     }
@@ -256,5 +277,57 @@ class DatabaseMigrationTest {
     val shortIv = java.util.Base64.getEncoder().encodeToString(byteArrayOf(4, 5))
     val payload = """{"format":"whatsapp-repeater-backup-v1","algorithm":"AES-256-GCM","saltBase64":"$shortSalt","ivBase64":"$shortIv","cipherTextBase64":"AAAA","payloadSha256":"00"}"""
     LocalBackupManager.importEncryptedJson(payload, "clave-segura")
+  }
+
+  @Test
+  fun `roundtrips v2 encrypted backup including smart template metadata and scheduled tasks`() {
+    val smartTemplate = SavedMessageList(
+      id = 1L,
+      title = "Seguimiento VIP",
+      isMultipleMode = false,
+      messages = emptyList(),
+      singleMessage = "Hola {nombre}",
+      repeatCount = 2,
+      updatedAtMillis = 1_700_000_000_000L,
+      category = "Ventas",
+      tags = listOf("vip", "cierre"),
+      isFavorite = true,
+      isPinned = true,
+      useCount = 4,
+      lastUsedAtMillis = 1_700_000_100_000L,
+    )
+    val schedule = ScheduledTask(
+      id = 3L,
+      title = "Recordatorio semanal",
+      contactId = "c1",
+      contactName = "Ana",
+      contactPhone = "+573001112222",
+      isMultipleMode = false,
+      messages = emptyList(),
+      singleMessage = "Hola",
+      repeatCount = 1,
+      minIntervalSeconds = 15,
+      maxIntervalSeconds = 30,
+      preferWhatsAppBusiness = true,
+      triggerAtMillis = 1_800_000_000_000L,
+      recurrence = SchedulerRecurrence.WEEKLY,
+    )
+
+    val encrypted = LocalBackupManager.exportEncryptedJson(
+      passphrase = "mi-clave-segura",
+      settings = AppSettings(vacationPauseEnabled = true),
+      savedLists = listOf(smartTemplate),
+      activeDraft = null,
+      history = emptyList(),
+      scheduledTasks = listOf(schedule),
+    )
+    val decoded = LocalBackupManager.importEncryptedJson(encrypted, "mi-clave-segura")
+    assertEquals(true, decoded.settings.vacationPauseEnabled)
+    assertEquals("Ventas", decoded.savedLists.first().category)
+    assertEquals(listOf("vip", "cierre"), decoded.savedLists.first().tags)
+    assertEquals(true, decoded.savedLists.first().isFavorite)
+    val tasks = LocalBackupManager.toScheduledTasks(decoded.scheduledTasks)
+    assertEquals(1, tasks.size)
+    assertEquals(SchedulerRecurrence.WEEKLY, tasks.first().recurrence)
   }
 }

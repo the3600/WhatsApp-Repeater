@@ -33,6 +33,8 @@ interface SettingsRepository {
 
   suspend fun updateKeepScreenOn(enabled: Boolean)
 
+  suspend fun updateVacationPause(enabled: Boolean)
+
   suspend fun updateGitHubRepository(owner: String, repo: String)
 
   suspend fun resetToDefaults()
@@ -49,6 +51,7 @@ class DataStoreSettingsRepository(
     val PREFER_BUSINESS = booleanPreferencesKey("prefer_whatsapp_business")
     val HAPTIC_FEEDBACK = booleanPreferencesKey("haptic_feedback_enabled")
     val KEEP_SCREEN_ON = booleanPreferencesKey("keep_screen_on_during_automation")
+    val VACATION_PAUSE = booleanPreferencesKey("scheduler_vacation_pause")
     val GITHUB_OWNER = stringPreferencesKey("github_repo_owner")
     val GITHUB_REPO = stringPreferencesKey("github_repo_name")
   }
@@ -63,6 +66,7 @@ class DataStoreSettingsRepository(
     val preferBusiness = prefs[Keys.PREFER_BUSINESS] ?: false
     val haptic = prefs[Keys.HAPTIC_FEEDBACK] ?: true
     val keepScreenOn = prefs[Keys.KEEP_SCREEN_ON] ?: true
+    val vacationPause = prefs[Keys.VACATION_PAUSE] ?: false
     val owner = prefs[Keys.GITHUB_OWNER]?.takeIf { it.isNotBlank() } ?: "the3600"
     val repo = prefs[Keys.GITHUB_REPO]?.takeIf { it.isNotBlank() } ?: "WhatsApp-Repeater"
 
@@ -73,6 +77,7 @@ class DataStoreSettingsRepository(
       preferWhatsAppBusiness = preferBusiness,
       hapticFeedbackEnabled = haptic,
       keepScreenOnDuringAutomation = keepScreenOn,
+      vacationPauseEnabled = vacationPause,
       githubRepoOwner = owner,
       githubRepoName = repo,
     )
@@ -112,6 +117,12 @@ class DataStoreSettingsRepository(
   override suspend fun updateKeepScreenOn(enabled: Boolean) {
     context.settingsDataStore.edit { prefs ->
       prefs[Keys.KEEP_SCREEN_ON] = enabled
+    }
+  }
+
+  override suspend fun updateVacationPause(enabled: Boolean) {
+    context.settingsDataStore.edit { prefs ->
+      prefs[Keys.VACATION_PAUSE] = enabled
     }
   }
 

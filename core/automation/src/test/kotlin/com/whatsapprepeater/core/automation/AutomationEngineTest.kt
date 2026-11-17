@@ -429,4 +429,31 @@ class AutomationEngineTest {
     assertEquals(20, records.size)
     assertTrue(records.all { it.scheduledCount == 50 && it.confirmedCount == 50 && it.messageTraces.size == 50 })
   }
+
+  @Test
+  fun `blocks execution when unresolved placeholder remains in message config`() = runTest {
+    val dispatcher = StandardTestDispatcher(testScheduler)
+    val driver = FakeAccessibilityDriver()
+    val records = mutableListOf<ExecutionRecord>()
+    val engine = AutomationEngine(
+      driver = driver,
+      onExecutionFinished = { records.add(it) },
+      delayProvider = { },
+      scope = TestScope(dispatcher),
+    )
+
+    engine.start(
+      AutomationConfig(
+        contact = contact,
+        mode = MessageMode.RepeatSingleMessage("Hola {nombre}", 2),
+        intervalRange = IntervalRange(5, 10),
+        userConfirmed = true,
+      ),
+    )
+    dispatcher.scheduler.advanceUntilIdle()
+
+    assertEquals(0, driver.sentMessages.size)
+    assertEquals(AutomationStatus.ERROR, engine.state.value.status)
+    assertTrue(engine.state.value.errorMessage!!.contains("{nombre}"))
+  }
 }

@@ -73,6 +73,8 @@ import com.whatsapprepeater.app.ui.components.StatusBadge
 import com.whatsapprepeater.app.ui.theme.BackgroundBlack
 import com.whatsapprepeater.app.ui.theme.CardSurface
 import com.whatsapprepeater.app.ui.theme.CardSurfaceElevated
+import com.whatsapprepeater.app.ui.theme.DangerContainer
+import com.whatsapprepeater.app.ui.theme.DangerRed
 import com.whatsapprepeater.app.ui.theme.OutlineSubtle
 import com.whatsapprepeater.app.ui.theme.TextPrimary
 import com.whatsapprepeater.app.ui.theme.TextSecondary
@@ -80,6 +82,7 @@ import com.whatsapprepeater.app.ui.theme.WarningAmber
 import com.whatsapprepeater.app.ui.theme.WarningContainer
 import com.whatsapprepeater.app.ui.theme.WhatsAppGreen
 import com.whatsapprepeater.app.ui.theme.WhatsAppGreenContainer
+import com.whatsapprepeater.core.model.MessageMode
 
 /**
  * Pantalla 8 (Stitch 8._confirmaci_n):
@@ -121,10 +124,9 @@ fun ConfirmationScreen(
   val totalMessages = state.totalScheduledPreview
   val avgDelay = (draft.minIntervalSeconds + draft.maxIntervalSeconds) / 2.0
   val estSeconds = ((totalMessages - 1).coerceAtLeast(0) * avgDelay + totalMessages * 3.0).toInt()
-  val previewSnippet = if (draft.isMultipleMode) {
-    draft.multipleMessages.firstOrNull().orEmpty()
-  } else {
-    draft.singleMessage
+  val previewSnippet = when (val resolvedMode = state.resolvedModePreview) {
+    is MessageMode.MultipleMessages -> resolvedMode.messages.firstOrNull().orEmpty()
+    is MessageMode.RepeatSingleMessage -> resolvedMode.message
   }
 
   Column(
@@ -279,6 +281,29 @@ fun ConfirmationScreen(
                 overflow = TextOverflow.Ellipsis,
               )
             }
+          }
+        }
+      }
+
+      if (state.variableValidationError != null) {
+        item {
+          SectionCard(borderColor = DangerRed, containerColor = DangerContainer) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+              Icon(Icons.Rounded.WarningAmber, contentDescription = null, tint = DangerRed)
+              Spacer(modifier = Modifier.width(8.dp))
+              Text("Variables sin resolver", style = MaterialTheme.typography.titleMedium, color = DangerRed)
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+              text = state.variableValidationError ?: "",
+              style = MaterialTheme.typography.bodyMedium,
+              color = TextPrimary,
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            LargeSecondaryButton(
+              text = "Corregir mensajes",
+              onClick = onModifyParameters,
+            )
           }
         }
       }
