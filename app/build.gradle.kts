@@ -12,8 +12,15 @@ val versionProps = Properties().apply {
     versionPropsFile.inputStream().use { load(it) }
   }
 }
-val appVersionCode = versionProps.getProperty("VERSION_CODE", "1").toInt()
-val appVersionName = versionProps.getProperty("VERSION_NAME", "1.0.0")
+val appVersionCode = System.getenv("ANDROID_VERSION_CODE")
+  ?.trim()
+  ?.toIntOrNull()
+  ?.takeIf { it > 0 }
+  ?: versionProps.getProperty("VERSION_CODE", "1").toInt()
+val appVersionName = System.getenv("ANDROID_VERSION_NAME")
+  ?.trim()
+  ?.takeIf { it.isNotEmpty() }
+  ?: versionProps.getProperty("VERSION_NAME", "1.0.0")
 
 val keystorePropsFile = rootProject.file("keystore.properties")
 val keystoreProps = Properties().apply {

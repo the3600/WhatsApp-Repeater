@@ -202,8 +202,13 @@ jobs:
   release-signed:
     name: Firmar APK de producción y publicar Release
     needs: test-and-debug
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.build_release == true)
+    if: |
+      (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) ||
+      (github.event_name == 'workflow_dispatch' && inputs.build_release == true)
     runs-on: ubuntu-latest
+    concurrency:
+      group: android-release-publish
+      cancel-in-progress: false
     permissions:
       contents: write
 
@@ -215,16 +220,104 @@ jobs:
           token: ${{ github.token }}
           persist-credentials: false
 
+      - name: Determinar versión automática y evitar publicaciones duplicadas
+        id: ver
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          BASE_CODE=$(grep '^VERSION_CODE=' version.properties | tr -d '\r' | cut -d'=' -f2)
+          BASE_NAME=$(grep '^VERSION_NAME=' version.properties | tr -d '\r' | cut -d'=' -f2)
+
+          RELEASES_JSON=$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${{ github.repository }}/releases?per_page=100" || echo "[]")
+          TAGS_JSON=$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${{ github.repository }}/tags?per_page=100" || echo "[]")
+
+          # Evitar duplicados si este commit ya generó un Release firmado válido (ej. reintentos o dispatch repetido)
+          if [[ "${{ github.ref }}" != refs/tags/v* ]]; then
+            EXISTING_TAG=$(printf '%s' "$RELEASES_JSON" | jq -r --arg sha "${{ github.sha }}" '
+              map(select(.draft == false and .target_commitish == $sha))
+              | map(select((.assets | any(.name | endswith(".apk"))) and (.assets | any(.name == "version-metadata.json"))))
+              | .[0].tag_name // empty
+            ' 2>/dev/null || true)
+            if [ -n "$EXISTING_TAG" ]; then
+              echo "Ya existe una publicación firmada verificada ($EXISTING_TAG) para el commit ${{ github.sha }}. Se omite duplicado."
+              echo "should_publish=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+
+          ALL_TAGS=$(printf '%s\n%s\n' \
+            "$(printf '%s' "$TAGS_JSON" | jq -r '.[].name // empty' 2>/dev/null || true)" \
+            "$(printf '%s' "$RELEASES_JSON" | jq -r '.[].tag_name // empty' 2>/dev/null || true)")
+
+          MAX_TAG_CODE=$(printf '%s\n' "$ALL_TAGS" | sed -nE 's/.*-build\.([0-9]+)$/\1/p' | sort -n | tail -n 1 || echo "0")
+          if [ -z "$MAX_TAG_CODE" ]; then MAX_TAG_CODE=0; fi
+
+          PREV_META_URL=$(printf '%s' "$RELEASES_JSON" | jq -r '
+            map(select(.draft == false))
+            | map(select(.assets | any(.name == "version-metadata.json")))
+            | .[0].assets[]? | select(.name == "version-metadata.json") | .url // empty
+          ' 2>/dev/null | head -n 1 || true)
+
+          PREV_META_CODE=0
+          PREV_CERT=""
+          if [ -n "$PREV_META_URL" ]; then
+            PREV_META_JSON=$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/octet-stream" "$PREV_META_URL" || true)
+            if [ -n "$PREV_META_JSON" ]; then
+              PREV_META_CODE=$(printf '%s' "$PREV_META_JSON" | jq -r '.versionCode // 0' 2>/dev/null || echo "0")
+              PREV_CERT=$(printf '%s' "$PREV_META_JSON" | jq -r '.signingCertSha256 // empty' 2>/dev/null | tr -d ':\r\n[:space:]' | tr '[:upper:]' '[:lower:]' || true)
+            fi
+          fi
+
+          PREV_MAX_CODE="$MAX_TAG_CODE"
+          if [ "$PREV_META_CODE" -gt "$PREV_MAX_CODE" ]; then
+            PREV_MAX_CODE="$PREV_META_CODE"
+          fi
+
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            TARGET_CODE="$BASE_CODE"
+            TARGET_NAME="$BASE_NAME"
+            RELEASE_TAG="${{ github.ref_name }}"
+            IS_PRERELEASE="false"
+            if [ "$TARGET_CODE" -le "$PREV_MAX_CODE" ]; then
+              echo "::error::El versionCode actual en version.properties ($TARGET_CODE) debe ser mayor que el publicado anteriormente ($PREV_MAX_CODE)."
+              exit 1
+            fi
+          else
+            TARGET_CODE=$((PREV_MAX_CODE + 1))
+            if [ "$TARGET_CODE" -lt "$BASE_CODE" ]; then
+              TARGET_CODE="$BASE_CODE"
+            fi
+            while printf '%s\n' "$ALL_TAGS" | grep -Fxq "v${BASE_NAME}-build.${TARGET_CODE}"; do
+              TARGET_CODE=$((TARGET_CODE + 1))
+            done
+            TARGET_NAME="${BASE_NAME}-build.${TARGET_CODE}"
+            RELEASE_TAG="v${TARGET_NAME}"
+            IS_PRERELEASE="true"
+          fi
+
+          echo "Versión calculada: versionName=$TARGET_NAME, versionCode=$TARGET_CODE, tag=$RELEASE_TAG, prerelease=$IS_PRERELEASE (prevMaxCode=$PREV_MAX_CODE)"
+          echo "should_publish=true" >> "$GITHUB_OUTPUT"
+          echo "version_code=$TARGET_CODE" >> "$GITHUB_OUTPUT"
+          echo "version_name=$TARGET_NAME" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "is_prerelease=$IS_PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "prev_max_code=$PREV_MAX_CODE" >> "$GITHUB_OUTPUT"
+          echo "prev_cert=$PREV_CERT" >> "$GITHUB_OUTPUT"
+
       - name: Configurar JDK 17
+        if: steps.ver.outputs.should_publish == 'true'
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
       - name: Configurar Gradle
+        if: steps.ver.outputs.should_publish == 'true'
         uses: gradle/actions/setup-gradle@v4
 
       - name: Validar existencia de GitHub Secrets de firma
+        if: steps.ver.outputs.should_publish == 'true'
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           STORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -237,6 +330,7 @@ jobs:
           fi
 
       - name: Decodificar keystore temporal de producción
+        if: steps.ver.outputs.should_publish == 'true'
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
@@ -247,7 +341,10 @@ jobs:
           fi
 
       - name: Compilar y firmar APK de producción
+        if: steps.ver.outputs.should_publish == 'true'
         env:
+          ANDROID_VERSION_CODE: ${{ steps.ver.outputs.version_code }}
+          ANDROID_VERSION_NAME: ${{ steps.ver.outputs.version_name }}
           ANDROID_KEYSTORE_PATH: /tmp/release-keystore.jks
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
@@ -262,12 +359,12 @@ jobs:
 
       - name: Verificar compatibilidad de actualización, firma y generar SHA-256
         id: verify
-        env:
-          GH_TOKEN: ${{ github.token }}
+        if: steps.ver.outputs.should_publish == 'true'
         run: |
           set -euo pipefail
-          VERSION_CODE=$(grep '^VERSION_CODE=' version.properties | tr -d '\r' | cut -d'=' -f2)
-          VERSION_NAME=$(grep '^VERSION_NAME=' version.properties | tr -d '\r' | cut -d'=' -f2)
+          VERSION_CODE="${{ steps.ver.outputs.version_code }}"
+          VERSION_NAME="${{ steps.ver.outputs.version_name }}"
+          PREV_CERT="${{ steps.ver.outputs.prev_cert }}"
 
           APK_SRC="app/build/outputs/apk/release/app-release.apk"
           if [ ! -s "$APK_SRC" ]; then
@@ -314,26 +411,11 @@ jobs:
             echo "::error::El certificado de firma SHA-256 obtenido ($CERT_SHA256) no coincide con el keystore permanente esperado ($EXPECTED_CERT_SHA256)."
             exit 1
           fi
-          echo "Certificado permanente verificado (SHA-256, 64 hex): $CERT_SHA256"
-
-          # Verificar compatibilidad frente al último Release estable publicado (si existe)
-          RELEASE_JSON=$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${{ github.repository }}/releases/latest" || true)
-          PREV_META_URL=$(echo "$RELEASE_JSON" | jq -r '.assets[]? | select(.name=="version-metadata.json") | .url // empty' 2>/dev/null || true)
-          if [ -n "$PREV_META_URL" ]; then
-            PREV_META_JSON=$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/octet-stream" "$PREV_META_URL" || true)
-            if [ -n "$PREV_META_JSON" ]; then
-              PREV_CODE=$(echo "$PREV_META_JSON" | jq -r '.versionCode // 0' 2>/dev/null || echo "0")
-              PREV_CERT=$(echo "$PREV_META_JSON" | jq -r '.signingCertSha256 // empty' 2>/dev/null | tr -d ':' | tr '[:upper:]' '[:lower:]' || true)
-              if [ "$VERSION_CODE" -le "$PREV_CODE" ]; then
-                echo "::error::El versionCode actual ($VERSION_CODE) debe ser mayor que el publicado anteriormente ($PREV_CODE)."
-                exit 1
-              fi
-              if [ -n "$PREV_CERT" ] && [ "$CERT_SHA256" != "$PREV_CERT" ]; then
-                echo "::error::El certificado actual ($CERT_SHA256) no coincide con el Release previo ($PREV_CERT). Rompería futuras actualizaciones."
-                exit 1
-              fi
-            fi
+          if [ -n "$PREV_CERT" ] && [ "$CERT_SHA256" != "$PREV_CERT" ]; then
+            echo "::error::El certificado actual ($CERT_SHA256) no coincide con el Release previo ($PREV_CERT). Rompería futuras actualizaciones."
+            exit 1
           fi
+          echo "Certificado permanente verificado (SHA-256, 64 hex): $CERT_SHA256"
 
           SHA256=$(sha256sum "$OUT_DIR/$APK_NAME" | awk '{print $1}')
           echo "$SHA256  $APK_NAME" > "$OUT_DIR/$APK_NAME.sha256"
@@ -358,11 +440,24 @@ jobs:
           jq -e '.applicationId == "com.whatsapprepeater.android" and .versionCode > 0 and (.sha256 | length == 64) and (.signingCertSha256 | length == 64)' "$OUT_DIR/version-metadata.json" > /dev/null
           cat "$OUT_DIR/version-metadata.json"
 
+          printf '%s\n' \
+            "### WhatsApp Repeater \`v${VERSION_NAME}\` (Release firmado)" \
+            "" \
+            "- **Application ID:** \`com.whatsapprepeater.android\`" \
+            "- **Versión:** \`${VERSION_NAME}\` (\`versionCode=${VERSION_CODE}\`)" \
+            "- **Archivo APK:** \`${APK_NAME}\`" \
+            "- **SHA-256 del APK:** \`${SHA256}\`" \
+            "- **Certificado de firma (SHA-256):** \`${CERT_SHA256}\`" \
+            "- **Commit:** \`${{ github.sha }}\`" \
+            "" \
+            "Compilado y firmado exclusivamente con el keystore permanente de producción. Mantiene compatibilidad de actualización en sitio conservando tus datos locales." \
+            > "$OUT_DIR/release-notes-release.md"
+
           echo "apk_name=$APK_NAME" >> "$GITHUB_OUTPUT"
           echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
 
       - name: Subir APK Release firmado como artefacto de verificación
-        if: success()
+        if: success() && steps.ver.outputs.should_publish == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: WhatsAppRepeater-release-signed
@@ -372,12 +467,16 @@ jobs:
             dist/version-metadata.json
           if-no-files-found: error
 
-      - name: Publicar APK firmado en GitHub Releases (solo etiquetas v*)
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Publicar versión Release firmada en GitHub Releases
+        if: success() && steps.ver.outputs.should_publish == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          name: "WhatsApp Repeater ${{ github.ref_name }}"
-          generate_release_notes: true
+          tag_name: ${{ steps.ver.outputs.release_tag }}
+          name: "WhatsApp Repeater v${{ steps.ver.outputs.version_name }}"
+          prerelease: ${{ steps.ver.outputs.is_prerelease == 'true' }}
+          draft: false
+          target_commitish: ${{ github.sha }}
+          body_path: dist/release-notes-release.md
           files: |
             dist/${{ steps.verify.outputs.apk_name }}
             dist/${{ steps.verify.outputs.apk_name }}.sha256
