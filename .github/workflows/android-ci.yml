@@ -75,11 +75,14 @@ jobs:
 
       - name: Verificar identidad fija de aplicación en APK Debug
         run: |
+          set -euo pipefail
           AAPT2=$(find "$ANDROID_HOME/build-tools" -name "aapt2" | sort -V | tail -n 1)
           APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name "apksigner" | sort -V | tail -n 1)
-          BADGING=$("$AAPT2" dump badging app/build/outputs/apk/debug/app-debug.apk)
-          echo "$BADGING" | head -n 5
-          echo "$BADGING" | grep -q "package: name='com.whatsapprepeater.android'"
+          BADGING_FILE=$(mktemp)
+          "$AAPT2" dump badging app/build/outputs/apk/debug/app-debug.apk > "$BADGING_FILE"
+          head -n 5 "$BADGING_FILE"
+          grep -q "package: name='com.whatsapprepeater.android'" "$BADGING_FILE"
+          rm -f "$BADGING_FILE"
           "$APKSIGNER" verify --verbose --print-certs app/build/outputs/apk/debug/app-debug.apk
 
       - name: Preparar APK Debug descargable con nombre reconocible
@@ -228,9 +231,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          source version.properties
+          VERSION_CODE=$(grep '^VERSION_CODE=' version.properties | tr -d '\r' | cut -d'=' -f2)
+          VERSION_NAME=$(grep '^VERSION_NAME=' version.properties | tr -d '\r' | cut -d'=' -f2)
+
           APK_SRC="app/build/outputs/apk/release/app-release.apk"
+          if [ ! -s "$APK_SRC" ]; then
+            echo "::error::No se encontró la APK Release esperada en $APK_SRC."
+            exit 1
+          fi
+
           OUT_DIR="dist"
+          rm -rf "$OUT_DIR"
           mkdir -p "$OUT_DIR"
           APK_NAME="WhatsAppRepeater-v${VERSION_NAME}-release.apk"
           cp "$APK_SRC" "$OUT_DIR/$APK_NAME"
@@ -238,27 +249,50 @@ jobs:
           AAPT2=$(find "$ANDROID_HOME/build-tools" -name "aapt2" | sort -V | tail -n 1)
           APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name "apksigner" | sort -V | tail -n 1)
 
-          BADGING=$("$AAPT2" dump badging "$OUT_DIR/$APK_NAME")
-          echo "$BADGING" | head -n 5
-          echo "$BADGING" | grep -q "package: name='com.whatsapprepeater.android'"
-          echo "$BADGING" | grep -q "versionCode='${VERSION_CODE}'"
+          BADGING_FILE=$(mktemp)
+          "$AAPT2" dump badging "$OUT_DIR/$APK_NAME" > "$BADGING_FILE"
+          head -n 5 "$BADGING_FILE"
+          grep -q "package: name='com.whatsapprepeater.android'" "$BADGING_FILE"
+          grep -q "versionCode='${VERSION_CODE}'" "$BADGING_FILE"
+          grep -q "versionName='${VERSION_NAME}'" "$BADGING_FILE"
+          rm -f "$BADGING_FILE"
 
-          "$APKSIGNER" verify --verbose "$OUT_DIR/$APK_NAME"
-          CERT_SHA256=$("$APKSIGNER" verify --print-certs "$OUT_DIR/$APK_NAME" | grep "Signer #1 certificate SHA-256 digest:" | awk '{print $NF}')
+          APKSIGNER_FILE=$(mktemp)
+          "$APKSIGNER" verify --verbose --print-certs "$OUT_DIR/$APK_NAME" > "$APKSIGNER_FILE"
+          cat "$APKSIGNER_FILE"
 
-          # Verificar incremento de versionCode frente al último Release publicado (si existe)
+          CERT_SHA256=$(awk '/Signer #1 certificate SHA-256 digest:/ {print $NF; exit}' "$APKSIGNER_FILE" | tr -d ':' | tr '[:upper:]' '[:lower:]')
+          rm -f "$APKSIGNER_FILE"
+
+          EXPECTED_CERT_SHA256=$(printf '%s' "0E:58:2E:7E:EC:87:12:C5:82:F7:A4:8F:1A:D1:D4:73:E2:BA:14:9F:4E:D9:97:91:45:74:A4:DA:EB:13:C1:09" | tr -d ':' | tr '[:upper:]' '[:lower:]')
+          if [ -z "$CERT_SHA256" ] || [ "$CERT_SHA256" != "$EXPECTED_CERT_SHA256" ]; then
+            echo "::error::El certificado de firma SHA-256 obtenido ($CERT_SHA256) no coincide con el keystore permanente esperado ($EXPECTED_CERT_SHA256)."
+            exit 1
+          fi
+          echo "Certificado permanente verificado (SHA-256): $CERT_SHA256"
+
+          # Verificar compatibilidad frente al último Release estable publicado (si existe)
           RELEASE_JSON=$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${{ github.repository }}/releases/latest" || true)
-          PREV_META_URL=$(echo "$RELEASE_JSON" | jq -r '.assets[]? | select(.name=="version-metadata.json") | .url // empty' || true)
+          PREV_META_URL=$(echo "$RELEASE_JSON" | jq -r '.assets[]? | select(.name=="version-metadata.json") | .url // empty' 2>/dev/null || true)
           if [ -n "$PREV_META_URL" ]; then
-            PREV_CODE=$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/octet-stream" "$PREV_META_URL" | jq -r '.versionCode // 0')
-            if [ "$VERSION_CODE" -le "$PREV_CODE" ]; then
-              echo "::error::El versionCode actual ($VERSION_CODE) debe ser mayor que el publicado anteriormente ($PREV_CODE)."
-              exit 1
+            PREV_META_JSON=$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/octet-stream" "$PREV_META_URL" || true)
+            if [ -n "$PREV_META_JSON" ]; then
+              PREV_CODE=$(echo "$PREV_META_JSON" | jq -r '.versionCode // 0' 2>/dev/null || echo "0")
+              PREV_CERT=$(echo "$PREV_META_JSON" | jq -r '.signingCertSha256 // empty' 2>/dev/null | tr -d ':' | tr '[:upper:]' '[:lower:]' || true)
+              if [ "$VERSION_CODE" -le "$PREV_CODE" ]; then
+                echo "::error::El versionCode actual ($VERSION_CODE) debe ser mayor que el publicado anteriormente ($PREV_CODE)."
+                exit 1
+              fi
+              if [ -n "$PREV_CERT" ] && [ "$CERT_SHA256" != "$PREV_CERT" ]; then
+                echo "::error::El certificado actual ($CERT_SHA256) no coincide con el Release previo ($PREV_CERT). Rompería futuras actualizaciones."
+                exit 1
+              fi
             fi
           fi
 
           SHA256=$(sha256sum "$OUT_DIR/$APK_NAME" | awk '{print $1}')
           echo "$SHA256  $APK_NAME" > "$OUT_DIR/$APK_NAME.sha256"
+          (cd "$OUT_DIR" && sha256sum -c "$APK_NAME.sha256")
 
           jq -n \
             --arg appId "com.whatsapprepeater.android" \
@@ -276,10 +310,14 @@ jobs:
               signingCertSha256: $certSha256
             }' > "$OUT_DIR/version-metadata.json"
 
+          jq -e '.applicationId == "com.whatsapprepeater.android" and .versionCode > 0 and (.sha256 | length == 64) and (.signingCertSha256 | length == 64)' "$OUT_DIR/version-metadata.json" > /dev/null
+          cat "$OUT_DIR/version-metadata.json"
+
           echo "apk_name=$APK_NAME" >> "$GITHUB_OUTPUT"
           echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
 
       - name: Subir APK Release firmado como artefacto de verificación
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: WhatsAppRepeater-release-signed
@@ -287,6 +325,7 @@ jobs:
             dist/${{ steps.verify.outputs.apk_name }}
             dist/${{ steps.verify.outputs.apk_name }}.sha256
             dist/version-metadata.json
+          if-no-files-found: error
 
       - name: Publicar APK firmado en GitHub Releases (solo etiquetas v*)
         if: startsWith(github.ref, 'refs/tags/v')
