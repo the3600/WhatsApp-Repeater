@@ -140,15 +140,23 @@ kotlin {
   jvmToolchain(17)
 }
 
+class RequireReleaseSigningAction(
+  private val releaseSigningConfigured: Boolean,
+) : org.gradle.api.Action<org.gradle.api.Task> {
+  override fun execute(task: org.gradle.api.Task) {
+    if (!releaseSigningConfigured) {
+      throw GradleException(
+        "No se encontró la clave de firma de producción. Configura ANDROID_KEYSTORE_* o keystore.properties. Nunca publiques una versión firmada con clave de depuración.",
+      )
+    }
+  }
+}
+
+val enforceReleaseSigning = RequireReleaseSigningAction(hasReleaseSigning)
+
 tasks.configureEach {
   if (name == "assembleRelease" || name == "bundleRelease") {
-    doFirst {
-      if (!hasReleaseSigning) {
-        throw GradleException(
-          "No se encontró la clave de firma de producción. Configura ANDROID_KEYSTORE_* o keystore.properties. Nunca publiques una versión firmada con clave de depuración.",
-        )
-      }
-    }
+    doFirst(enforceReleaseSigning)
   }
 }
 
