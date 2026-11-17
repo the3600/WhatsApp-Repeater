@@ -85,6 +85,41 @@ jobs:
           rm -f "$BADGING_FILE"
           "$APKSIGNER" verify --verbose --print-certs app/build/outputs/apk/debug/app-debug.apk
 
+      - name: Prueba de regresión del extractor SHA-256 de apksigner
+        run: |
+          set -euo pipefail
+          EXPECTED_CERT_SHA256="0e582e7eec8712c582f7a48f1ad1d473e2ba149f4ed997914574a4daeb13c109"
+          extract_cert_sha256() {
+            local file="$1"
+            local line
+            line=$(grep -i -m 1 'V2 Signer:.*certificate SHA-256 digest:' "$file" || grep -i -m 1 'certificate SHA-256 digest:' "$file" || true)
+            printf '%s\n' "$line" \
+              | sed -E 's/.*certificate SHA-256 digest:[[:space:]]*//I' \
+              | tr -d ':\r\n[:space:]' \
+              | tr '[:upper:]' '[:lower:]' \
+              | grep -Eo '^[0-9a-f]{64}$' || true
+          }
+
+          SAMPLE_V2=$(mktemp)
+          printf '%s\n' \
+            'Verifies' \
+            'Verified using v1 scheme (JAR signing): false' \
+            'Verified using v2 scheme (APK Signature Scheme v2): true' \
+            'Number of signers: 1' \
+            'V2 Signer: certificate DN: CN=WhatsApp Repeater' \
+            'V2 Signer: certificate SHA-256 digest: 0e582e7eec8712c582f7a48f1ad1d473e2ba149f4ed997914574a4daeb13c109' \
+            > "$SAMPLE_V2"
+          GOT_V2=$(extract_cert_sha256 "$SAMPLE_V2")
+          rm -f "$SAMPLE_V2"
+          [ "${#GOT_V2}" -eq 64 ] && [ "$GOT_V2" = "$EXPECTED_CERT_SHA256" ]
+
+          SAMPLE_COLON=$(mktemp)
+          printf 'Signer #1 certificate SHA-256 digest: 0E:58:2E:7E:EC:87:12:C5:82:F7:A4:8F:1A:D1:D4:73:E2:BA:14:9F:4E:D9:97:91:45:74:A4:DA:EB:13:C1:09\n' > "$SAMPLE_COLON"
+          GOT_COLON=$(extract_cert_sha256 "$SAMPLE_COLON")
+          rm -f "$SAMPLE_COLON"
+          [ "${#GOT_COLON}" -eq 64 ] && [ "$GOT_COLON" = "$EXPECTED_CERT_SHA256" ]
+          echo "Regresión apksigner SHA-256 OK: $GOT_V2"
+
       - name: Preparar APK Debug descargable con nombre reconocible
         run: |
           mkdir -p dist-debug
@@ -261,15 +296,25 @@ jobs:
           "$APKSIGNER" verify --verbose --print-certs "$OUT_DIR/$APK_NAME" > "$APKSIGNER_FILE"
           cat "$APKSIGNER_FILE"
 
-          CERT_SHA256=$(awk '/Signer #1 certificate SHA-256 digest:/ {print $NF; exit}' "$APKSIGNER_FILE" | tr -d ':' | tr '[:upper:]' '[:lower:]')
+          CERT_LINE=$(grep -i -m 1 'V2 Signer:.*certificate SHA-256 digest:' "$APKSIGNER_FILE" || grep -i -m 1 'certificate SHA-256 digest:' "$APKSIGNER_FILE" || true)
+          CERT_SHA256=$(printf '%s\n' "$CERT_LINE" \
+            | sed -E 's/.*certificate SHA-256 digest:[[:space:]]*//I' \
+            | tr -d ':\r\n[:space:]' \
+            | tr '[:upper:]' '[:lower:]' \
+            | grep -Eo '^[0-9a-f]{64}$' || true)
           rm -f "$APKSIGNER_FILE"
 
-          EXPECTED_CERT_SHA256=$(printf '%s' "0E:58:2E:7E:EC:87:12:C5:82:F7:A4:8F:1A:D1:D4:73:E2:BA:14:9F:4E:D9:97:91:45:74:A4:DA:EB:13:C1:09" | tr -d ':' | tr '[:upper:]' '[:lower:]')
-          if [ -z "$CERT_SHA256" ] || [ "$CERT_SHA256" != "$EXPECTED_CERT_SHA256" ]; then
+          if [ -z "$CERT_SHA256" ] || ! printf '%s\n' "$CERT_SHA256" | grep -Eq '^[0-9a-f]{64}$'; then
+            echo "::error::No se pudo extraer una huella SHA-256 válida de 64 caracteres hexadecimales desde apksigner (obtenido: '$CERT_SHA256')."
+            exit 1
+          fi
+
+          EXPECTED_CERT_SHA256="0e582e7eec8712c582f7a48f1ad1d473e2ba149f4ed997914574a4daeb13c109"
+          if [ "$CERT_SHA256" != "$EXPECTED_CERT_SHA256" ]; then
             echo "::error::El certificado de firma SHA-256 obtenido ($CERT_SHA256) no coincide con el keystore permanente esperado ($EXPECTED_CERT_SHA256)."
             exit 1
           fi
-          echo "Certificado permanente verificado (SHA-256): $CERT_SHA256"
+          echo "Certificado permanente verificado (SHA-256, 64 hex): $CERT_SHA256"
 
           # Verificar compatibilidad frente al último Release estable publicado (si existe)
           RELEASE_JSON=$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${{ github.repository }}/releases/latest" || true)
