@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -20,8 +21,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
@@ -94,6 +97,13 @@ fun MessageEditorScreen(
 
   LaunchedEffect(Unit) {
     viewModel.setMultipleMode(true)
+  }
+
+  LaunchedEffect(state.multipleMessages.size) {
+    val activeIdx = editingIndex
+    if (activeIdx != null && activeIdx !in state.multipleMessages.indices) {
+      editingIndex = null
+    }
   }
 
   val multipleSavedLists = remember(state.savedLists) {
@@ -240,7 +250,12 @@ fun MessageEditorScreen(
               IconButton(onClick = { showPreviewDialog = true }) {
                 Icon(Icons.Rounded.Visibility, contentDescription = "Vista previa", tint = WhatsAppGreen)
               }
-              IconButton(onClick = viewModel::clearAllMultipleMessages) {
+              IconButton(
+                onClick = {
+                  editingIndex = null
+                  viewModel.clearAllMultipleMessages()
+                },
+              ) {
                 Icon(Icons.Rounded.DeleteSweep, contentDescription = "Limpiar todo", tint = DangerRed)
               }
             }
@@ -290,7 +305,13 @@ fun MessageEditorScreen(
               horizontalArrangement = Arrangement.End,
               modifier = Modifier.fillMaxWidth(),
             ) {
-              IconButton(onClick = { viewModel.moveMessageUp(index) }, enabled = index > 0) {
+              IconButton(
+                onClick = {
+                  editingIndex = null
+                  viewModel.moveMessageUp(index)
+                },
+                enabled = index > 0,
+              ) {
                 Icon(
                   Icons.Rounded.ArrowUpward,
                   contentDescription = "Subir",
@@ -298,7 +319,10 @@ fun MessageEditorScreen(
                 )
               }
               IconButton(
-                onClick = { viewModel.moveMessageDown(index) },
+                onClick = {
+                  editingIndex = null
+                  viewModel.moveMessageDown(index)
+                },
                 enabled = index < state.multipleMessages.lastIndex,
               ) {
                 Icon(
@@ -315,7 +339,12 @@ fun MessageEditorScreen(
               ) {
                 Icon(Icons.Rounded.Edit, contentDescription = "Editar", tint = WhatsAppGreen)
               }
-              IconButton(onClick = { viewModel.removeMessageAt(index) }) {
+              IconButton(
+                onClick = {
+                  editingIndex = null
+                  viewModel.removeMessageAt(index)
+                },
+              ) {
                 Icon(Icons.Rounded.DeleteOutline, contentDescription = "Eliminar", tint = DangerRed)
               }
             }
@@ -370,13 +399,21 @@ fun MessageEditorScreen(
         )
       },
       confirmButton = {
+        val canSaveEdit = editingText.isNotBlank()
         TextButton(
+          enabled = canSaveEdit,
           onClick = {
-            viewModel.editMessageAt(targetEditIndex, editingText)
+            if (canSaveEdit && targetEditIndex in state.multipleMessages.indices) {
+              viewModel.editMessageAt(targetEditIndex, editingText)
+            }
             editingIndex = null
           },
         ) {
-          Text("Guardar", color = WhatsAppGreen, fontWeight = FontWeight.Bold)
+          Text(
+            "Guardar",
+            color = if (canSaveEdit) WhatsAppGreen else TextSecondary,
+            fontWeight = FontWeight.Bold,
+          )
         }
       },
       dismissButton = {
@@ -394,7 +431,12 @@ fun MessageEditorScreen(
       titleContentColor = TextPrimary,
       title = { Text("Vista previa de secuencia (${state.multipleMessages.size})") },
       text = {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(
+          modifier = Modifier
+            .heightIn(max = 360.dp)
+            .verticalScroll(rememberScrollState()),
+          verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
           state.multipleMessages.forEachIndexed { idx, msg ->
             Text(
               text = "${idx + 1}. $msg",

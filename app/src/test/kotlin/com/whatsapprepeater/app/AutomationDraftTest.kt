@@ -4,6 +4,7 @@ import com.whatsapprepeater.app.ui.automation.AutomationUiState
 import com.whatsapprepeater.app.ui.config.IntervalConfigUiState
 import com.whatsapprepeater.app.ui.contacts.ContactPickerUiState
 import com.whatsapprepeater.app.ui.messages.MessageEditorUiState
+import com.whatsapprepeater.app.ui.messages.MessageEditorViewModel
 import com.whatsapprepeater.core.model.AutomationConfig
 import com.whatsapprepeater.core.model.AutomationState
 import com.whatsapprepeater.core.model.AutomationStatus
@@ -116,5 +117,13 @@ class AutomationDraftTest {
     assertFalse(ready.copy(isServiceConnected = false).canStartAutomation)
     assertFalse(ready.copy(isWhatsAppInstalled = false).canStartAutomation)
     assertFalse(ready.copy(engineState = AutomationState(status = AutomationStatus.WRITING_MESSAGE)).canStartAutomation)
+  }
+
+  @Test
+  fun `formats whatsapp markdown markers cleanly without dangling delimiters`() {
+    assertEquals("*texto*", MessageEditorViewModel.formatMessageSnippet("", "*"))
+    assertEquals("*Hola*", MessageEditorViewModel.formatMessageSnippet("Hola", "*"))
+    assertEquals("Hola *texto*", MessageEditorViewModel.formatMessageSnippet("Hola ", "*"))
+    assertEquals("*Hola* *texto*", MessageEditorViewModel.formatMessageSnippet("*Hola*", "*"))
   }
 }

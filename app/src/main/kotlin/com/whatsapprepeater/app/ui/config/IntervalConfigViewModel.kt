@@ -46,6 +46,21 @@ class IntervalConfigViewModel(
   private val saveAsDefaultFlow = MutableStateFlow(true)
   private val preferBusinessFlow = MutableStateFlow(container.draft.value.preferWhatsAppBusiness)
 
+  @Volatile
+  private var userEdited = false
+
+  init {
+    viewModelScope.launch {
+      container.draft.collect { draft ->
+        if (!userEdited) {
+          minFlow.value = draft.minIntervalSeconds
+          maxFlow.value = draft.maxIntervalSeconds
+          preferBusinessFlow.value = draft.preferWhatsAppBusiness
+        }
+      }
+    }
+  }
+
   val uiState: StateFlow<IntervalConfigUiState> = combine(
     minFlow,
     maxFlow,
@@ -74,18 +89,21 @@ class IntervalConfigViewModel(
   )
 
   fun adjustMin(delta: Int) {
+    userEdited = true
     val updated = (minFlow.value + delta).coerceIn(1, SafetyLimits.MAX_INTERVAL_SECONDS)
     minFlow.value = updated
     syncDraftIfValid()
   }
 
   fun adjustMax(delta: Int) {
+    userEdited = true
     val updated = (maxFlow.value + delta).coerceIn(1, SafetyLimits.MAX_INTERVAL_SECONDS)
     maxFlow.value = updated
     syncDraftIfValid()
   }
 
   fun applyPreset(minSec: Int, maxSec: Int) {
+    userEdited = true
     minFlow.value = minSec
     maxFlow.value = maxSec
     syncDraftIfValid()
@@ -96,6 +114,7 @@ class IntervalConfigViewModel(
   }
 
   fun setPreferWhatsAppBusiness(enabled: Boolean) {
+    userEdited = true
     preferBusinessFlow.value = enabled
     container.updateDraft { it.copy(preferWhatsAppBusiness = enabled) }
   }

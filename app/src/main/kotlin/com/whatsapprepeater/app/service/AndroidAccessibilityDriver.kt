@@ -31,6 +31,7 @@ class AndroidAccessibilityDriver(
   @Volatile
   private var serviceRef: AutomationAccessibilityService? = null
 
+  private val nodesLock = Any()
   @Volatile
   private var activeNodes: Map<String, AccessibilityNodeInfo> = emptyMap()
 
@@ -42,7 +43,9 @@ class AndroidAccessibilityDriver(
   fun detachService(service: AutomationAccessibilityService) {
     if (serviceRef === service) {
       serviceRef = null
-      activeNodes = emptyMap()
+      synchronized(nodesLock) {
+        activeNodes = emptyMap()
+      }
       _isServiceConnected.value = false
     }
   }
@@ -111,7 +114,9 @@ class AndroidAccessibilityDriver(
       activePkg != AutomationConfig.WHATSAPP_BUSINESS_PACKAGE
     ) {
       // Nunca recorrer ni almacenar nodos de aplicaciones externas fuera de WhatsApp.
-      activeNodes = emptyMap()
+      synchronized(nodesLock) {
+        activeNodes = emptyMap()
+      }
       return ScreenSnapshot(
         foregroundPackage = activePkg,
         screenWidth = metrics.widthPixels,
@@ -125,45 +130,50 @@ class AndroidAccessibilityDriver(
 
     fun mapNode(node: AccessibilityNodeInfo, depth: Int): UiNodeSnapshot? {
       if (depth > 24 || counter >= 350) return null
-      val id = "n_${counter++}"
-      nodeRegistry[id] = node
+      return runCatching {
+        val id = "n_${counter++}"
+        nodeRegistry[id] = node
 
-      val rect = Rect()
-      node.getBoundsInScreen(rect)
+        val rect = Rect()
+        node.getBoundsInScreen(rect)
 
-      val children = buildList {
-        for (i in 0 until node.childCount) {
-          val child = node.getChild(i) ?: continue
-          mapNode(child, depth + 1)?.let { add(it) }
+        val children = buildList {
+          val childCount = node.childCount
+          for (i in 0 until childCount) {
+            val child = runCatching { node.getChild(i) }.getOrNull() ?: continue
+            mapNode(child, depth + 1)?.let { add(it) }
+          }
         }
-      }
 
-      return UiNodeSnapshot(
-        nodeId = id,
-        packageName = node.packageName?.toString(),
-        className = node.className?.toString(),
-        viewIdResourceName = node.viewIdResourceName,
-        text = node.text?.toString(),
-        contentDescription = node.contentDescription?.toString(),
-        hintText = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-          node.hintText?.toString()
-        } else {
-          null
-        },
-        isClickable = node.isClickable,
-        isEditable = node.isEditable,
-        isEnabled = node.isEnabled,
-        isVisibleToUser = node.isVisibleToUser,
-        bounds = NodeBounds(rect.left, rect.top, rect.right, rect.bottom),
-        children = children,
-      )
+        UiNodeSnapshot(
+          nodeId = id,
+          packageName = node.packageName?.toString(),
+          className = node.className?.toString(),
+          viewIdResourceName = node.viewIdResourceName,
+          text = node.text?.toString(),
+          contentDescription = node.contentDescription?.toString(),
+          hintText = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            node.hintText?.toString()
+          } else {
+            null
+          },
+          isClickable = node.isClickable,
+          isEditable = node.isEditable,
+          isEnabled = node.isEnabled,
+          isVisibleToUser = node.isVisibleToUser,
+          bounds = NodeBounds(rect.left, rect.top, rect.right, rect.bottom),
+          children = children,
+        )
+      }.getOrNull()
     }
 
     val mappedRoot = mapNode(rootNode, 0)
-    activeNodes = nodeRegistry
+    synchronized(nodesLock) {
+      activeNodes = nodeRegistry
+    }
 
     return ScreenSnapshot(
-      foregroundPackage = rootNode.packageName?.toString() ?: service.lastForegroundPackage,
+      foregroundPackage = runCatching { rootNode.packageName?.toString() }.getOrNull() ?: service.lastForegroundPackage,
       screenWidth = metrics.widthPixels,
       screenHeight = metrics.heightPixels,
       root = mappedRoot,
@@ -171,38 +181,46 @@ class AndroidAccessibilityDriver(
   }
 
   override fun clickNode(nodeId: String): Boolean {
-    val node = activeNodes[nodeId] ?: return false
-    if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-      return true
-    }
-    var parent = node.parent
-    var hops = 0
-    while (parent != null && hops < 4) {
-      if (parent.isClickable && parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-        return true
+    val node = synchronized(nodesLock) { activeNodes[nodeId] } ?: return false
+    return runCatching {
+      if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+        return@runCatching true
       }
-      parent = parent.parent
-      hops++
-    }
-    return false
+      var parent = node.parent
+      var hops = 0
+      while (parent != null && hops < 4) {
+        if (parent.isClickable && parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+          return@runCatching true
+        }
+        parent = parent.parent
+        hops++
+      }
+      false
+    }.getOrDefault(false)
   }
 
   override fun setText(nodeId: String, text: String): Boolean {
-    val node = activeNodes[nodeId] ?: return false
-    node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-    val args = Bundle().apply {
-      putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
-    }
-    return node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+    val node = synchronized(nodesLock) { activeNodes[nodeId] } ?: return false
+    return runCatching {
+      node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+      val args = Bundle().apply {
+        putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+      }
+      node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+    }.getOrDefault(false)
   }
 
   override fun navigateBack(): Boolean {
     val service = serviceRef ?: return false
-    return service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+    return runCatching {
+      service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+    }.getOrDefault(false)
   }
 
   override fun clearNodeCache() {
-    activeNodes = emptyMap()
+    synchronized(nodesLock) {
+      activeNodes = emptyMap()
+    }
   }
 
   fun isWhatsAppInstalled(): Boolean =

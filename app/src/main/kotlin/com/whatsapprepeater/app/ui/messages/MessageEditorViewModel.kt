@@ -76,13 +76,8 @@ class MessageEditorViewModel(
   }
 
   fun wrapOrAppendFormatting(marker: String) {
-    val current = newMessageInput.value
-    val updated = if (current.isBlank()) {
-      "${marker}texto$marker"
-    } else {
-      "$current $marker"
-    }
-    newMessageInput.value = updated.take(SafetyLimits.MAX_MESSAGE_LENGTH)
+    newMessageInput.value = formatMessageSnippet(newMessageInput.value, marker)
+      .take(SafetyLimits.MAX_MESSAGE_LENGTH)
   }
 
   fun addMessageToList() {
@@ -234,6 +229,13 @@ class MessageEditorViewModel(
   }
 
   companion object {
+    internal fun formatMessageSnippet(current: String, marker: String): String = when {
+      current.isBlank() -> "${marker}texto$marker"
+      current.endsWith(" ") || current.endsWith("\n") -> "$current${marker}texto$marker"
+      !current.contains(marker) -> "$marker$current$marker"
+      else -> "$current ${marker}texto$marker"
+    }
+
     fun factory(container: AppContainer): ViewModelProvider.Factory =
       object : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")

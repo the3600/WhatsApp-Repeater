@@ -63,7 +63,17 @@ class UpdateManager(
     ).apply {
       addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
-    context.startActivity(intent)
+    val opened = runCatching {
+      context.startActivity(intent)
+      true
+    }.getOrDefault(false)
+    if (!opened) {
+      val fallback = Intent(
+        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+        Uri.fromParts("package", context.packageName, null),
+      ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      runCatching { context.startActivity(fallback) }
+    }
   }
 
   suspend fun checkLatestRelease(owner: String, repo: String): Result<UpdateCheckResult> =
@@ -132,6 +142,10 @@ class UpdateManager(
       }
 
       val totalBytes = connection.contentLengthLong.takeIf { it > 0 } ?: candidate.apkSizeBytes
+      if (totalBytes > MAX_APK_DOWNLOAD_BYTES) {
+        emit(ApkDownloadEvent.Failed("El APK remoto excede el límite seguro permitido (150 MB)."))
+        return@flow
+      }
       var downloaded = 0L
 
       connection.inputStream.use { input ->
@@ -141,8 +155,13 @@ class UpdateManager(
           var lastEmitBytes = 0L
           while (bytesRead >= 0) {
             currentCoroutineContext().ensureActive()
-            output.write(buffer, 0, bytesRead)
             downloaded += bytesRead
+            if (downloaded > MAX_APK_DOWNLOAD_BYTES) {
+              targetFile.delete()
+              emit(ApkDownloadEvent.Failed("La descarga excedió el tamaño máximo permitido (150 MB)."))
+              return@flow
+            }
+            output.write(buffer, 0, bytesRead)
             if (downloaded - lastEmitBytes >= 64 * 1024 || downloaded == totalBytes) {
               val fraction = if (totalBytes > 0) (downloaded.toFloat() / totalBytes).coerceIn(0f, 1f) else 0f
               emit(ApkDownloadEvent.Progress(fraction, downloaded, totalBytes))
@@ -276,6 +295,10 @@ class UpdateManager(
     } finally {
       conn.disconnect()
     }
+  }
+
+  private companion object {
+    const val MAX_APK_DOWNLOAD_BYTES = 150L * 1024L * 1024L
   }
 }
 

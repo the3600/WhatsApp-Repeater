@@ -173,6 +173,9 @@ object LocalBackupManager {
 
   private const val ITERATIONS = 65_536
   private const val KEY_LENGTH_BITS = 256
+  private const val SALT_BYTES = 16
+  private const val IV_BYTES = 12
+  private const val MAX_RAW_BACKUP_CHARS = 10_000_000
   private const val GCM_TAG_BITS = 128
 
   fun exportEncryptedJson(
@@ -330,6 +333,9 @@ object LocalBackupManager {
 
   fun importEncryptedJson(rawEnvelopeJson: String, passphrase: String): BackupPayload {
     require(passphrase.length >= 4) { "Ingresa la clave usada para cifrar el respaldo." }
+    require(rawEnvelopeJson.length <= MAX_RAW_BACKUP_CHARS) {
+      "El archivo de respaldo excede el tamaño máximo seguro permitido."
+    }
 
     val envelope = try {
       json.decodeFromString<EncryptedBackupEnvelope>(rawEnvelopeJson)
@@ -343,6 +349,7 @@ object LocalBackupManager {
     val plainBytes = try {
       val salt = Base64.getDecoder().decode(envelope.saltBase64)
       val iv = Base64.getDecoder().decode(envelope.ivBase64)
+      require(salt.size == SALT_BYTES && iv.size == IV_BYTES) { "Parámetros de cifrado inválidos." }
       val cipherBytes = Base64.getDecoder().decode(envelope.cipherTextBase64)
       val secretKey = deriveAesKey(passphrase, salt)
 
@@ -456,9 +463,19 @@ object LocalBackupManager {
 
   private fun deriveAesKey(passphrase: String, salt: ByteArray): SecretKeySpec {
     val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
-    val spec = PBEKeySpec(passphrase.toCharArray(), salt, ITERATIONS, KEY_LENGTH_BITS)
-    val keyBytes = factory.generateSecret(spec).encoded
-    return SecretKeySpec(keyBytes, "AES")
+    val chars = passphrase.toCharArray()
+    val spec = PBEKeySpec(chars, salt, ITERATIONS, KEY_LENGTH_BITS)
+    val keyBytes = try {
+      factory.generateSecret(spec).encoded
+    } finally {
+      chars.fill('\u0000')
+      spec.clearPassword()
+    }
+    return try {
+      SecretKeySpec(keyBytes, "AES")
+    } finally {
+      keyBytes.fill(0)
+    }
   }
 
   private fun sha256Hex(bytes: ByteArray): String =

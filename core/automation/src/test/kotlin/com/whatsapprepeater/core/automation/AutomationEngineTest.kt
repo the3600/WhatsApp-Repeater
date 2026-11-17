@@ -332,4 +332,101 @@ class AutomationEngineTest {
     assertEquals(AutomationStatus.ERROR, engine.state.value.status)
     assertEquals(ExecutionFinalStatus.FAILED_SAFETY_CHECK, records.first().finalStatus)
   }
+
+  @Test
+  fun `stop followed immediately by resetToIdle preserves accurate execution history counts`() = runTest {
+    val dispatcher = StandardTestDispatcher(testScheduler)
+    val driver = FakeAccessibilityDriver()
+    val records = mutableListOf<ExecutionRecord>()
+    lateinit var engine: AutomationEngine
+    engine = AutomationEngine(
+      driver = driver,
+      onExecutionFinished = { records.add(it) },
+      delayProvider = { },
+      scope = TestScope(dispatcher),
+    )
+    driver.onAfterFirstSend = {
+      engine.stop()
+      engine.resetToIdle()
+    }
+
+    engine.start(
+      AutomationConfig(
+        contact = contact,
+        mode = MessageMode.MultipleMessages(listOf("Msg 1", "Msg 2", "Msg 3")),
+        intervalRange = IntervalRange(10, 15),
+        userConfirmed = true,
+      ),
+    )
+    dispatcher.scheduler.advanceUntilIdle()
+
+    assertEquals(1, records.size)
+    val rec = records.first()
+    assertEquals(3, rec.scheduledCount)
+    assertEquals(1, rec.confirmedCount)
+    assertEquals(2, rec.cancelledCount)
+    assertEquals(ExecutionFinalStatus.STOPPED_BY_USER, rec.finalStatus)
+  }
+
+  @Test
+  fun `rejects oversized 1000 message payload above safety limit without launching`() = runTest {
+    val dispatcher = StandardTestDispatcher(testScheduler)
+    val driver = FakeAccessibilityDriver()
+    val records = mutableListOf<ExecutionRecord>()
+    val engine = AutomationEngine(
+      driver = driver,
+      onExecutionFinished = { records.add(it) },
+      delayProvider = { },
+      scope = TestScope(dispatcher),
+    )
+
+    val oversizedBatch = (1..1000).map { "Mensaje #$it" }
+    engine.start(
+      AutomationConfig(
+        contact = contact,
+        mode = MessageMode.MultipleMessages(oversizedBatch),
+        intervalRange = IntervalRange(5, 6),
+        userConfirmed = true,
+      ),
+    )
+    dispatcher.scheduler.advanceUntilIdle()
+
+    assertEquals(0, driver.sentMessages.size)
+    assertEquals(0, records.size)
+    assertEquals(AutomationStatus.ERROR, engine.state.value.status)
+  }
+
+  @Test
+  fun `stress test 20x50 sequential messages complete across 1000 total dispatches without race`() = runTest {
+    val dispatcher = StandardTestDispatcher(testScheduler)
+    val driver = FakeAccessibilityDriver()
+    val records = mutableListOf<ExecutionRecord>()
+    val engine = AutomationEngine(
+      driver = driver,
+      onExecutionFinished = { records.add(it) },
+      delayProvider = { },
+      scope = TestScope(dispatcher),
+    )
+
+    val batch = (1..50).map { "Mensaje #$it" }
+    val config = AutomationConfig(
+      contact = contact,
+      mode = MessageMode.MultipleMessages(batch),
+      intervalRange = IntervalRange(5, 6),
+      userConfirmed = true,
+    )
+
+    repeat(20) {
+      // Repeated start calls must not double-launch
+      engine.start(config)
+      engine.start(config)
+      dispatcher.scheduler.advanceUntilIdle()
+      assertEquals(AutomationStatus.COMPLETED, engine.state.value.status)
+      engine.resetToIdle()
+    }
+
+    assertEquals(1000, driver.sentMessages.size)
+    assertEquals(20, records.size)
+    assertTrue(records.all { it.scheduledCount == 50 && it.confirmedCount == 50 && it.messageTraces.size == 50 })
+  }
 }

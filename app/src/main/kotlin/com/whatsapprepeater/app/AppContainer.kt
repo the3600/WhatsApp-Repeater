@@ -29,6 +29,7 @@ import com.whatsapprepeater.core.model.IntervalRange
 import com.whatsapprepeater.core.model.MessageMode
 import com.whatsapprepeater.core.model.PersistedAutomationDraft
 import com.whatsapprepeater.core.model.SafetyLimits
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -37,7 +38,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Borrador compartido y persistido localmente entre reinicios y actualizaciones de APK.
@@ -179,27 +183,34 @@ class AppContainer(context: Context) {
   private val _draft = MutableStateFlow(AutomationDraft())
   val draft: StateFlow<AutomationDraft> = _draft.asStateFlow()
 
+  private val draftPersistMutex = Mutex()
   @Volatile
   private var draftMutatedInMemory = false
 
   init {
     appScope.launch {
-      val persistedDraft = savedConfigRepository.getActiveDraftOnce()
-      if (!draftMutatedInMemory) {
-        if (persistedDraft != null) {
-          _draft.value = AutomationDraft.fromPersisted(persistedDraft)
-        } else {
-          val saved = settingsRepository.settings.first()
-          if (!draftMutatedInMemory) {
-            _draft.update {
-              it.copy(
-                minIntervalSeconds = saved.defaultMinIntervalSeconds,
-                maxIntervalSeconds = saved.defaultMaxIntervalSeconds,
-                preferWhatsAppBusiness = saved.preferWhatsAppBusiness,
-              )
+      try {
+        val persistedDraft = savedConfigRepository.getActiveDraftOnce()
+        if (!draftMutatedInMemory) {
+          if (persistedDraft != null) {
+            _draft.value = AutomationDraft.fromPersisted(persistedDraft)
+          } else {
+            val saved = settingsRepository.settings.first()
+            if (!draftMutatedInMemory) {
+              _draft.update {
+                it.copy(
+                  minIntervalSeconds = saved.defaultMinIntervalSeconds,
+                  maxIntervalSeconds = saved.defaultMaxIntervalSeconds,
+                  preferWhatsAppBusiness = saved.preferWhatsAppBusiness,
+                )
+              }
             }
           }
         }
+      } catch (c: CancellationException) {
+        throw c
+      } catch (_: Exception) {
+        // Mantiene valores seguros en memoria si el primer acceso a Room/DataStore falla.
       }
     }
 
@@ -212,11 +223,8 @@ class AppContainer(context: Context) {
 
   fun updateDraft(transform: (AutomationDraft) -> AutomationDraft) {
     draftMutatedInMemory = true
-    _draft.update(transform)
-    val snapshot = _draft.value
-    appScope.launch {
-      savedConfigRepository.saveActiveDraft(snapshot.toPersisted())
-    }
+    _draft.updateAndGet(transform)
+    schedulePersistLatestDraft()
   }
 
   fun resetDraftForNewAutomation(
@@ -230,9 +238,14 @@ class AppContainer(context: Context) {
       maxIntervalSeconds = defaultMax,
       preferWhatsAppBusiness = preferBusiness,
     )
-    val snapshot = _draft.value
+    schedulePersistLatestDraft()
+  }
+
+  private fun schedulePersistLatestDraft() {
     appScope.launch {
-      savedConfigRepository.saveActiveDraft(snapshot.toPersisted())
+      draftPersistMutex.withLock {
+        savedConfigRepository.saveActiveDraft(_draft.value.toPersisted())
+      }
     }
   }
 

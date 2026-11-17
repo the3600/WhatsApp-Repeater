@@ -107,28 +107,36 @@ class UpdatesViewModel(
       downloadedApkFile.value = null
       verifiedSha256.value = null
 
-      val settings = container.settingsRepository.settings.first()
-      val result = container.updateManager.checkLatestRelease(
-        owner = settings.githubRepoOwner,
-        repo = settings.githubRepoName,
-      )
-      result.fold(
-        onSuccess = { evaluated ->
-          checkResult.value = evaluated
-          if (evaluated is UpdateCheckResult.IncompatibleUpdate) {
-            incompatibilityAlert.value = evaluated.reason
-          }
-        },
-        onFailure = { err ->
-          checkError.value = err.message ?: "No se pudo consultar GitHub Releases."
-        },
-      )
-      isChecking.value = false
+      try {
+        val settings = container.settingsRepository.settings.first()
+        val result = container.updateManager.checkLatestRelease(
+          owner = settings.githubRepoOwner,
+          repo = settings.githubRepoName,
+        )
+        result.fold(
+          onSuccess = { evaluated ->
+            checkResult.value = evaluated
+            if (evaluated is UpdateCheckResult.IncompatibleUpdate) {
+              incompatibilityAlert.value = evaluated.reason
+            }
+          },
+          onFailure = { err ->
+            checkError.value = err.message ?: "No se pudo consultar GitHub Releases."
+          },
+        )
+      } catch (c: CancellationException) {
+        throw c
+      } catch (e: Exception) {
+        checkError.value = e.message ?: "Error inesperado consultando actualizaciones."
+      } finally {
+        isChecking.value = false
+      }
     }
   }
 
   fun downloadUpdate(candidate: RemoteReleaseCandidate, expectedSha256: String?) {
     if (isDownloading.value) return
+    downloadJob?.cancel()
     downloadJob = viewModelScope.launch {
       isDownloading.value = true
       downloadProgress.value = 0f
@@ -147,22 +155,22 @@ class UpdatesViewModel(
               downloadProgress.value = 1f
               downloadedApkFile.value = event.apkFile
               verifiedSha256.value = event.actualSha256
-              isDownloading.value = false
             }
             is ApkDownloadEvent.Incompatible -> {
               incompatibilityAlert.value = event.reason
-              isDownloading.value = false
             }
             is ApkDownloadEvent.Failed -> {
               downloadError.value = event.reason
-              isDownloading.value = false
             }
           }
         }
       } catch (_: CancellationException) {
-        isDownloading.value = false
         downloadProgress.value = 0f
         downloadError.value = "Descarga cancelada por el usuario."
+      } catch (e: Exception) {
+        downloadError.value = e.message ?: "Error inesperado descargando la actualización."
+      } finally {
+        isDownloading.value = false
       }
     }
   }
@@ -170,6 +178,8 @@ class UpdatesViewModel(
   fun cancelDownload() {
     downloadJob?.cancel()
     downloadJob = null
+    isDownloading.value = false
+    downloadProgress.value = 0f
   }
 
   fun launchInstaller(): Boolean {

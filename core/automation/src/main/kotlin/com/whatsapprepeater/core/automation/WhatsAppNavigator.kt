@@ -150,7 +150,7 @@ class WhatsAppNavigator {
       val headerNorm = normalizeText(header)
       if (headerNorm.isEmpty()) continue
 
-      if (targetNameNorm.length >= 2 && (headerNorm == targetNameNorm || headerNorm.contains(targetNameNorm) || targetNameNorm.contains(headerNorm))) {
+      if (namesMatchSafely(targetNameNorm, headerNorm)) {
         return RecipientVerificationResult.Verified(matchedText = header)
       }
 
@@ -191,8 +191,7 @@ class WhatsAppNavigator {
       allRowTexts.any { candidateText ->
         val norm = normalizeText(candidateText)
         val digits = candidateText.filter { it.isDigit() }
-        (targetName.length >= 2 && (norm == targetName || norm.contains(targetName))) ||
-          digitsMatch(targetDigits, digits)
+        namesMatchSafely(targetName, norm) || digitsMatch(targetDigits, digits)
       }
     }
   }
@@ -286,7 +285,18 @@ class WhatsAppNavigator {
       .mapNotNull { it.text?.trim()?.takeIf { txt -> txt.isNotEmpty() } }
       .filterNot { txt ->
         val norm = normalizeText(txt)
-        norm in setOf("hoy", "today", "ayer", "yesterday", "en linea", "online", "escribiendo...", "typing...")
+        norm in setOf(
+          "hoy",
+          "today",
+          "ayer",
+          "yesterday",
+          "en linea",
+          "online",
+          "escribiendo...",
+          "typing...",
+          "toca aqui para info. del contacto",
+          "tap here for contact info",
+        ) || norm.startsWith("ult. vez") || norm.startsWith("last seen")
       }
       .distinct()
       .toList()
@@ -318,6 +328,20 @@ class WhatsAppNavigator {
       val txt = normalizeText(node.text)
       txt in tabLabels
     }
+  }
+
+  private fun namesMatchSafely(targetNameNorm: String, observedNorm: String): Boolean {
+    if (targetNameNorm.length < 2 || observedNorm.isEmpty()) return false
+    if (observedNorm == targetNameNorm) return true
+    if (targetNameNorm.length < 3 || observedNorm.length < 3) return false
+    return containsTokenOrPrefix(observedNorm, targetNameNorm) ||
+      containsTokenOrPrefix(targetNameNorm, observedNorm)
+  }
+
+  private fun containsTokenOrPrefix(haystack: String, needle: String): Boolean {
+    if (needle.length >= 4 && haystack.startsWith(needle)) return true
+    val tokenRegex = Regex("(?<![\\p{L}\\p{N}])${Regex.escape(needle)}(?![\\p{L}\\p{N}])")
+    return tokenRegex.containsMatchIn(haystack)
   }
 
   private fun digitsMatch(a: String, b: String): Boolean {

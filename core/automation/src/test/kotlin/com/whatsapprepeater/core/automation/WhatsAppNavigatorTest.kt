@@ -125,5 +125,44 @@ class WhatsAppNavigatorTest {
     assertTrue(screen is WhatsAppScreen.ExternalApp)
     assertEquals("com.android.settings", (screen as WhatsAppScreen.ExternalApp).packageName)
   }
+
+  @Test
+  fun `rejects short single or two character header substring false positives`() {
+    val target = ContactInfo(id = "2", name = "Ana María", phoneNumber = "+57 300 999 8888")
+    val falseHeaders = listOf("a", "n", "an", "ma", "x", "1", "En línea")
+    for (badHeader in falseHeaders) {
+      val screen = WhatsAppScreen.OpenConversation(
+        headerTexts = listOf(badHeader),
+        inputNode = null,
+        sendButtonNode = null,
+        micButtonPresent = true,
+      )
+      val verification = navigator.verifyRecipientMatches(screen, target)
+      assertTrue(
+        "No debe validar cabecera ambigua '$badHeader' para '${target.name}'",
+        verification is RecipientVerificationResult.Mismatch,
+      )
+    }
+
+    // Exact 2-char contact match remains valid
+    val shortExactContact = ContactInfo(id = "3", name = "Al", phoneNumber = "+57 300 000 1111")
+    val exactMatchScreen = WhatsAppScreen.OpenConversation(
+      headerTexts = listOf("Al"),
+      inputNode = null,
+      sendButtonNode = null,
+      micButtonPresent = true,
+    )
+    assertTrue(
+      navigator.verifyRecipientMatches(exactMatchScreen, shortExactContact) is RecipientVerificationResult.Verified,
+    )
+
+    // Short 2-char contact name must NOT match longer unrelated name "Alberto" in search rows
+    val albertoRow = UiNodeSnapshot(
+      nodeId = "row_alberto",
+      isClickable = true,
+      children = listOf(UiNodeSnapshot(nodeId = "row_text", text = "Alberto Gómez")),
+    )
+    assertEquals(null, navigator.findMatchingChatRow(listOf(albertoRow), shortExactContact))
+  }
 }
 

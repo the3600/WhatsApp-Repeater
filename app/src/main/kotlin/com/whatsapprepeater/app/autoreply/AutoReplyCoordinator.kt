@@ -29,6 +29,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 data class AutoReplyRuntimeState(
@@ -60,6 +62,8 @@ class AutoReplyCoordinator(
   val runtimeState: StateFlow<AutoReplyRuntimeState> = _runtimeState.asStateFlow()
 
   private val pendingDispatchJobs = mutableSetOf<Job>()
+  private val contactsLookupMutex = Mutex()
+  @Volatile
   private var cachedContactsLookup: Pair<Long, SavedContactsLookup>? = null
 
   init {
@@ -245,9 +249,16 @@ class AutoReplyCoordinator(
       return cached.second
     }
 
-    val loaded = runCatching { contactsRepository.loadPhoneContacts() }.getOrDefault(emptyList())
-    return SavedContactsLookup.fromContacts(permissionGranted = true, contacts = loaded).also {
-      cachedContactsLookup = now to it
+    return contactsLookupMutex.withLock {
+      val innerNow = System.currentTimeMillis()
+      val innerCached = cachedContactsLookup
+      if (innerCached != null && innerNow - innerCached.first < 60_000L) {
+        return@withLock innerCached.second
+      }
+      val loaded = runCatching { contactsRepository.loadPhoneContacts() }.getOrDefault(emptyList())
+      SavedContactsLookup.fromContacts(permissionGranted = true, contacts = loaded).also {
+        cachedContactsLookup = innerNow to it
+      }
     }
   }
 

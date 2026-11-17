@@ -159,8 +159,20 @@ class SettingsBackupViewModel(
       isProcessingBackup.value = true
       try {
         val raw = withContext(Dispatchers.IO) {
-          context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-            ?: error("No se pudo leer el archivo seleccionado.")
+          context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { reader ->
+            val maxChars = 10_000_000
+            val sb = StringBuilder()
+            val buf = CharArray(8192)
+            while (true) {
+              val n = reader.read(buf)
+              if (n < 0) break
+              if (sb.length + n > maxChars) {
+                error("El archivo seleccionado excede el tamaño máximo soportado (10 MB).")
+              }
+              sb.append(buf, 0, n)
+            }
+            sb.toString()
+          } ?: error("No se pudo leer el archivo seleccionado.")
         }
 
         val payload = withContext(Dispatchers.Default) {
@@ -219,7 +231,6 @@ class SettingsBackupViewModel(
             preferWhatsAppBusiness = d.preferWhatsAppBusiness,
             updatedAtMillis = d.updatedAtMillis,
           )
-          container.savedConfigRepository.saveActiveDraft(persisted)
           container.updateDraft { AutomationDraft.fromPersisted(persisted) }
         }
 
@@ -239,11 +250,11 @@ class SettingsBackupViewModel(
         // Restaurar reglas y configuración del Motor 2 sin duplicar
         val existingRuleKeys = container.autoReplyRepository
           .getRulesOnce()
-          .map { "${it.name}_${it.pattern}_${it.matchType.name}" }
+          .map { "${it.name}_${it.pattern}_${it.matchType.name}_${it.priority}_${it.responseTemplate.hashCode()}" }
           .toSet()
 
         LocalBackupManager.toAutoReplyRules(payload.autoReplyRules).forEach { rule ->
-          val key = "${rule.name}_${rule.pattern}_${rule.matchType.name}"
+          val key = "${rule.name}_${rule.pattern}_${rule.matchType.name}_${rule.priority}_${rule.responseTemplate.hashCode()}"
           if (key !in existingRuleKeys) {
             container.autoReplyRepository.saveRule(rule)
           }

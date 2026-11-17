@@ -243,4 +243,18 @@ class DatabaseMigrationTest {
     assertEquals(true, restoredSettings?.welcomeEnabled)
     assertEquals("Volvemos pronto", restoredSettings?.awayMessage)
   }
+
+  @Test(expected = IllegalArgumentException::class)
+  fun `rejects oversized encrypted backup payload before decoding`() {
+    val oversized = "x".repeat(10_000_001)
+    LocalBackupManager.importEncryptedJson(oversized, "clave-segura")
+  }
+
+  @Test(expected = IllegalArgumentException::class)
+  fun `rejects encrypted backup with invalid salt or iv byte lengths`() {
+    val shortSalt = java.util.Base64.getEncoder().encodeToString(byteArrayOf(1, 2, 3))
+    val shortIv = java.util.Base64.getEncoder().encodeToString(byteArrayOf(4, 5))
+    val payload = """{"format":"whatsapp-repeater-backup-v1","algorithm":"AES-256-GCM","saltBase64":"$shortSalt","ivBase64":"$shortIv","cipherTextBase64":"AAAA","payloadSha256":"00"}"""
+    LocalBackupManager.importEncryptedJson(payload, "clave-segura")
+  }
 }

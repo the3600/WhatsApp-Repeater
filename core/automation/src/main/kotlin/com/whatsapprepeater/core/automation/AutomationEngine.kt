@@ -45,16 +45,30 @@ class AutomationEngine(
   val state: StateFlow<AutomationState> = _state.asStateFlow()
 
   private val pauseRequested = MutableStateFlow(false)
+  private val stateLock = Any()
   @Volatile
   private var stopRequested = false
+  @Volatile
+  private var isLoopActive = false
   private var activeJob: Job? = null
   private var lastStatusBeforePause: AutomationStatus = AutomationStatus.WAITING_INTERVAL
 
-  @Synchronized
   fun start(config: AutomationConfig) {
-    if (activeJob?.isActive == true) return
+    synchronized(stateLock) {
+      if (isLoopActive || activeJob?.isActive == true) return
 
-    if (!config.userConfirmed) {
+      if (config.contact.phoneNumber.isBlank() && config.contact.name.isBlank()) {
+        _state.value = AutomationState(
+          status = AutomationStatus.ERROR,
+          contact = config.contact,
+          errorCount = 1,
+          statusDetail = "Destinatario inválido",
+          errorMessage = "Selecciona un contacto o ingresa un número válido antes de iniciar.",
+        )
+        return
+      }
+
+      if (!config.userConfirmed) {
       _state.value = AutomationState(
         status = AutomationStatus.ERROR,
         contact = config.contact,
@@ -101,86 +115,98 @@ class AutomationEngine(
       return
     }
 
-    val now = clockMillis()
-    val batchId = "WR-${((now % 90_000L) + 10_000L)}"
-    val rangeText = "${config.intervalRange.minSeconds}s - ${config.intervalRange.maxSeconds}s"
+      val now = clockMillis()
+      val batchId = "WR-${((now % 90_000L) + 10_000L)}"
+      val rangeText = "${config.intervalRange.minSeconds}s - ${config.intervalRange.maxSeconds}s"
 
-    pauseRequested.value = false
-    stopRequested = false
-    _state.value = AutomationState(
-      status = AutomationStatus.OPENING_WHATSAPP,
-      contact = config.contact,
-      totalScheduled = loadedMessages.size,
-      sentConfirmed = 0,
-      errorCount = 0,
-      currentMessageIndex = 0,
-      currentMessagePreview = loadedMessages.firstOrNull(),
-      statusDetail = "Abriendo WhatsApp para ${config.contact.name}...",
-      batchId = batchId,
-      activeIntervalRangeText = rangeText,
-      startedAtMillis = now,
-    )
+      pauseRequested.value = false
+      stopRequested = false
+      isLoopActive = true
+      _state.value = AutomationState(
+        status = AutomationStatus.OPENING_WHATSAPP,
+        contact = config.contact,
+        totalScheduled = loadedMessages.size,
+        sentConfirmed = 0,
+        errorCount = 0,
+        currentMessageIndex = 0,
+        currentMessagePreview = loadedMessages.firstOrNull(),
+        statusDetail = "Abriendo WhatsApp para ${config.contact.name}...",
+        batchId = batchId,
+        activeIntervalRangeText = rangeText,
+        startedAtMillis = now,
+      )
 
-    activeJob = scope.launch {
-      runAutomationLoop(config, batchId, now)
+      activeJob = scope.launch {
+        runAutomationLoop(config, batchId, now, loadedMessages.toList())
+      }
     }
   }
 
   fun pause() {
-    if (_state.value.isRunning) {
-      pauseRequested.value = true
-      lastStatusBeforePause = _state.value.status
-      _state.update {
-        it.copy(
-          status = AutomationStatus.PAUSED,
-          statusDetail = "Pausado por el usuario",
-        )
+    synchronized(stateLock) {
+      if (_state.value.isRunning) {
+        pauseRequested.value = true
+        lastStatusBeforePause = _state.value.status
+        _state.update {
+          it.copy(
+            status = AutomationStatus.PAUSED,
+            statusDetail = "Pausado por el usuario",
+          )
+        }
       }
     }
   }
 
   fun resume() {
-    if (_state.value.isPaused) {
-      pauseRequested.value = false
-      _state.update {
-        it.copy(
-          status = lastStatusBeforePause,
-          statusDetail = "Reanudando automatización...",
-        )
+    synchronized(stateLock) {
+      if (_state.value.isPaused) {
+        pauseRequested.value = false
+        _state.update {
+          it.copy(
+            status = lastStatusBeforePause,
+            statusDetail = "Reanudando automatización...",
+          )
+        }
       }
     }
   }
 
   fun stop() {
-    pauseRequested.value = false
-    stopRequested = true
-    val current = _state.value
-    if (activeJob?.isActive == true) {
-      activeJob?.cancel(CancellationException("Detención de emergencia activada por el usuario"))
-      _state.update {
-        it.copy(
-          status = AutomationStatus.STOPPED,
-          remainingIntervalSeconds = 0,
-          statusDetail = "Detenido manualmente por el usuario.",
-          finishedAtMillis = clockMillis(),
-        )
-      }
-    } else if (current.isPaused || current.isRunning) {
-      _state.update {
-        it.copy(
-          status = AutomationStatus.STOPPED,
-          remainingIntervalSeconds = 0,
-          statusDetail = "Detenido manualmente por el usuario.",
-          finishedAtMillis = clockMillis(),
-        )
+    synchronized(stateLock) {
+      pauseRequested.value = false
+      stopRequested = true
+      val current = _state.value
+      val job = activeJob
+      if (job?.isActive == true) {
+        job.cancel(CancellationException("Detención de emergencia activada por el usuario"))
+        _state.update {
+          it.copy(
+            status = AutomationStatus.STOPPED,
+            remainingIntervalSeconds = 0,
+            statusDetail = "Detenido manualmente por el usuario.",
+            finishedAtMillis = clockMillis(),
+          )
+        }
+      } else if (current.isPaused || current.isRunning || isLoopActive) {
+        isLoopActive = false
+        _state.update {
+          it.copy(
+            status = AutomationStatus.STOPPED,
+            remainingIntervalSeconds = 0,
+            statusDetail = "Detenido manualmente por el usuario.",
+            finishedAtMillis = clockMillis(),
+          )
+        }
       }
     }
   }
 
   fun resetToIdle() {
-    if (activeJob?.isActive != true) {
-      queueManager.clear()
-      _state.value = AutomationState()
+    synchronized(stateLock) {
+      if (!isLoopActive && activeJob?.isActive != true) {
+        queueManager.clear()
+        _state.value = AutomationState()
+      }
     }
   }
 
@@ -188,13 +214,16 @@ class AutomationEngine(
     config: AutomationConfig,
     batchId: String,
     startedAtMillis: Long,
+    initialMessages: List<String>,
   ) {
     var errorCount = 0
+    var confirmedLocalCount = 0
+    val scheduledTotal = initialMessages.size
     var finalStatus = ExecutionFinalStatus.COMPLETED
     var finalDetail = "Todos los mensajes fueron enviados y verificados."
     val traces = mutableListOf<MessageExecutionTrace>()
     val intervalSamples = mutableListOf<Int>()
-    val allMessages = queueManager.allMessages()
+    val allMessages = initialMessages
 
     val modeLabel = when (config.mode) {
       is MessageMode.RepeatSingleMessage -> "Repetición de mensaje único"
@@ -202,6 +231,7 @@ class AutomationEngine(
     }
 
     try {
+      ensureNotStopped()
       // Paso 6-7: Abrir WhatsApp directamente hacia la conversación del contacto seleccionado.
       val opened = driver.openWhatsAppChat(config.contact, config.targetPackage)
       if (!opened) {
@@ -357,11 +387,12 @@ class AutomationEngine(
             timestampMillis = clockMillis(),
           ),
         )
+        confirmedLocalCount++
         queueManager.markCurrentSent()
 
         _state.update {
           it.copy(
-            sentConfirmed = queueManager.sentCount,
+            sentConfirmed = confirmedLocalCount,
             currentMessageIndex = queueManager.currentIndex,
             currentMessagePreview = queueManager.currentMessage(),
           )
@@ -430,6 +461,13 @@ class AutomationEngine(
 
       driver.clearNodeCache()
 
+      synchronized(stateLock) {
+        if (activeJob === kotlin.coroutines.coroutineContext[Job]) {
+          activeJob = null
+        }
+        isLoopActive = false
+      }
+
       withContext(NonCancellable) {
         onExecutionFinished(
           ExecutionRecord(
@@ -437,8 +475,8 @@ class AutomationEngine(
             timestampMillis = nowEnd,
             contactName = config.contact.name,
             contactPhone = config.contact.phoneNumber,
-            scheduledCount = queueManager.totalCount,
-            confirmedCount = queueManager.sentCount,
+            scheduledCount = scheduledTotal,
+            confirmedCount = confirmedLocalCount,
             errorCount = errorCount.coerceAtLeast(snapshotState.errorCount),
             finalStatus = finalStatus,
             statusDetail = finalDetail,

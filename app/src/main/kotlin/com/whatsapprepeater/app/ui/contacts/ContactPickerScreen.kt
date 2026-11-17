@@ -223,8 +223,8 @@ fun ContactPickerScreen(
                   val intent = Intent(
                     Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
                     Uri.fromParts("package", context.packageName, null),
-                  )
-                  context.startActivity(intent)
+                  ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                  runCatching { context.startActivity(intent) }
                 },
               ) {
                 Text("Abrir ajustes de la app para habilitar contactos", color = WhatsAppGreen)
