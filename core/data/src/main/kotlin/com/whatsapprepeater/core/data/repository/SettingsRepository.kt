@@ -23,6 +23,10 @@ private val Context.settingsDataStore: DataStore<Preferences> by preferencesData
 interface SettingsRepository {
   val settings: Flow<AppSettings>
 
+  val composerDraft: Flow<String>
+
+  suspend fun updateComposerDraft(text: String)
+
   suspend fun updateDefaultIntervals(minSeconds: Int, maxSeconds: Int)
 
   suspend fun updateMaxRepeatCount(maxRepeatCount: Int)
@@ -54,6 +58,21 @@ class DataStoreSettingsRepository(
     val VACATION_PAUSE = booleanPreferencesKey("scheduler_vacation_pause")
     val GITHUB_OWNER = stringPreferencesKey("github_repo_owner")
     val GITHUB_REPO = stringPreferencesKey("github_repo_name")
+    val COMPOSER_DRAFT = stringPreferencesKey("composer_draft_buffer")
+  }
+
+  override val composerDraft: Flow<String> = context.settingsDataStore.data.map { prefs ->
+    prefs[Keys.COMPOSER_DRAFT].orEmpty()
+  }
+
+  override suspend fun updateComposerDraft(text: String) {
+    context.settingsDataStore.edit { prefs ->
+      if (text.isEmpty()) {
+        prefs.remove(Keys.COMPOSER_DRAFT)
+      } else {
+        prefs[Keys.COMPOSER_DRAFT] = text.take(SafetyLimits.MAX_MESSAGE_LENGTH)
+      }
+    }
   }
 
   override val settings: Flow<AppSettings> = context.settingsDataStore.data.map { prefs ->

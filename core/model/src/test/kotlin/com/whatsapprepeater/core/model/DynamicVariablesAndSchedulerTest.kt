@@ -79,5 +79,9 @@ class DynamicVariablesAndSchedulerTest {
     val nextZdt = ZonedDateTime.ofInstant(java.time.Instant.ofEpochMilli(nextMillis), zone)
     assertEquals(java.time.DayOfWeek.MONDAY, nextZdt.dayOfWeek)
     assertEquals(16, nextZdt.hour)
+
+    val expiringTask = task.copy(expirationMillis = fridayFourPm + 3_600_000L)
+    assertTrue(expiringTask.isExpiredAt(fridayFourPm + 7_200_000L))
+    assertNull(SchedulerLogic.computeNextTriggerMillis(expiringTask, fridayFourPm, zone))
   }
 }

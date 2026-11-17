@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.core.content.FileProvider
+import androidx.core.net.toUri
 import com.whatsapprepeater.app.BuildConfig
 import com.whatsapprepeater.core.updater.GitHubReleaseParser
 import com.whatsapprepeater.core.updater.InstalledAppInfo
@@ -59,7 +60,7 @@ class UpdateManager(
   fun openUnknownSourcesSettings() {
     val intent = Intent(
       Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-      Uri.parse("package:${context.packageName}"),
+      "package:${context.packageName}".toUri(),
     ).apply {
       addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
@@ -296,6 +297,35 @@ class UpdateManager(
       conn.disconnect()
     }
   }
+
+  suspend fun probeUpdaterAvailability(owner: String, repo: String): Result<String> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val cleanOwner = owner.trim()
+        val cleanRepo = repo.trim()
+        require(cleanOwner.isNotEmpty() && cleanRepo.isNotEmpty()) { "Repositorio no configurado." }
+        val url = "https://api.github.com/repos/$cleanOwner/$cleanRepo/releases?per_page=1"
+        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+          requestMethod = "GET"
+          connectTimeout = 8_000
+          readTimeout = 8_000
+          setRequestProperty("Accept", "application/vnd.github+json")
+          setRequestProperty("User-Agent", "WhatsAppRepeater-Android/${BuildConfig.VERSION_NAME}")
+        }
+        try {
+          val started = System.currentTimeMillis()
+          val code = conn.responseCode
+          val latencyMs = (System.currentTimeMillis() - started).coerceAtLeast(1L)
+          when (code) {
+            in 200..299 -> "Conectado ($cleanOwner/$cleanRepo • HTTP $code en ${latencyMs}ms)."
+            404 -> "Red activa (HTTP 404 en $cleanOwner/$cleanRepo; si el repo es privado usa APK manual o repo público de Releases)."
+            else -> "Red activa pero GitHub respondió HTTP $code en ${latencyMs}ms."
+          }
+        } finally {
+          conn.disconnect()
+        }
+      }
+    }
 
   private companion object {
     const val MAX_APK_DOWNLOAD_BYTES = 150L * 1024L * 1024L

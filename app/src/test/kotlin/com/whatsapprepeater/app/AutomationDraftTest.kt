@@ -167,4 +167,19 @@ class AutomationDraftTest {
     assertFalse(state.canStartAutomation)
     assertTrue(state.variableValidationError!!.contains("{variable_falsa}"))
   }
+
+  @Test
+  fun `editor duplicates selected or current line fragment and strips markdown cleanly`() {
+    val selected = TextFieldValue("Hola mundo", selection = TextRange(5, 10))
+    val dupSelected = MessageEditorViewModel.duplicateFragmentInField(selected)
+    assertEquals("Hola mundomundo", dupSelected.text)
+
+    val cursorLine = TextFieldValue("Linea 1\nLinea 2", selection = TextRange(3))
+    val dupLine = MessageEditorViewModel.duplicateFragmentInField(cursorLine)
+    assertEquals("Linea 1\nLinea 1\nLinea 2", dupLine.text)
+
+    val styled = TextFieldValue("*Hola* _mundo_ ~hoy~")
+    val stripped = MessageEditorViewModel.stripMarkdownMarkers(styled)
+    assertEquals("Hola mundo hoy", stripped.text)
+  }
 }

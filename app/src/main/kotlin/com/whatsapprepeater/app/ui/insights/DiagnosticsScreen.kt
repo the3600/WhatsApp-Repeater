@@ -2,9 +2,9 @@ package com.whatsapprepeater.app.ui.insights
 
 import android.Manifest
 import android.content.Intent
-import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import androidx.core.net.toUri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -81,6 +81,7 @@ fun DiagnosticsScreen(
   val lifecycleOwner = LocalLifecycleOwner.current
   val items by viewModel.diagnostics.collectAsStateWithLifecycle()
   val isXiaomi by viewModel.isXiaomiHyperOsDevice.collectAsStateWithLifecycle()
+  val isCheckingNet by viewModel.isCheckingConnectivity.collectAsStateWithLifecycle()
 
   val permissionLauncher = rememberLauncherForActivityResult(
     contract = ActivityResultContracts.RequestPermission(),
@@ -152,6 +153,12 @@ fun DiagnosticsScreen(
           icon = Icons.Rounded.Refresh,
           onClick = { viewModel.runDiagnostics(context) },
         )
+        Spacer(modifier = Modifier.height(8.dp))
+        LargeSecondaryButton(
+          text = if (isCheckingNet) "Consultando GitHub Releases..." else "Comprobar red y actualizador (bajo demanda)",
+          enabled = !isCheckingNet,
+          onClick = { viewModel.checkUpdaterConnectivity(context) },
+        )
       }
 
       if (isXiaomi) {
@@ -197,7 +204,7 @@ fun DiagnosticsScreen(
               DiagnosticActionType.OPEN_UNKNOWN_SOURCES -> {
                 val pkgIntent = Intent(
                   Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                  Uri.parse("package:${context.packageName}"),
+                  "package:${context.packageName}".toUri(),
                 ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 runCatching { context.startActivity(pkgIntent) }
               }

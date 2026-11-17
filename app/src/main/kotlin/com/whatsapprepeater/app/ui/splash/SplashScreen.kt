@@ -63,9 +63,9 @@ fun SplashScreen(
   LaunchedEffect(Unit) {
     progress.animateTo(
       targetValue = 1f,
-      animationSpec = tween(durationMillis = 1_100, easing = FastOutSlowInEasing),
+      animationSpec = tween(durationMillis = 450, easing = FastOutSlowInEasing),
     )
-    delay(250L)
+    delay(100L)
     onContinue()
   }
 

@@ -25,7 +25,9 @@ import androidx.compose.material.icons.automirrored.rounded.KeyboardReturn
 import androidx.compose.material.icons.automirrored.rounded.Redo
 import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.FileCopy
 import androidx.compose.material.icons.rounded.FindReplace
+import androidx.compose.material.icons.rounded.FormatClear
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.StarOutline
@@ -87,6 +89,8 @@ fun SmartEditorToolkit(
   onUndo: () -> Unit,
   onRedo: () -> Unit,
   onOpenSearchReplace: () -> Unit,
+  onDuplicateFragment: () -> Unit = {},
+  onClearFormatting: () -> Unit = {},
 ) {
   val context = LocalContext.current
   var copiedNotice by remember { mutableStateOf(false) }
@@ -139,6 +143,18 @@ fun SmartEditorToolkit(
         clipboard.setPrimaryClip(ClipData.newPlainText("WhatsApp Message", livePreviewText.ifBlank { rawText }))
         copiedNotice = true
       },
+    )
+    ToolbarIconAction(
+      icon = Icons.Rounded.FileCopy,
+      description = "Duplicar fragmento o línea",
+      enabled = rawText.isNotBlank(),
+      onClick = onDuplicateFragment,
+    )
+    ToolbarIconAction(
+      icon = Icons.Rounded.FormatClear,
+      description = "Limpiar formato Markdown",
+      enabled = rawText.isNotBlank(),
+      onClick = onClearFormatting,
     )
   }
 

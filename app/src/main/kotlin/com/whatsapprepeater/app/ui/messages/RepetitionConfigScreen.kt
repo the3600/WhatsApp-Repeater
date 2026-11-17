@@ -156,6 +156,8 @@ fun RepetitionConfigScreen(
             onUndo = { viewModel.undoActiveEditor(isMultiple = false) },
             onRedo = { viewModel.redoActiveEditor(isMultiple = false) },
             onOpenSearchReplace = { showSearchReplaceDialog = true },
+            onDuplicateFragment = { viewModel.duplicateFragment(isMultiple = false) },
+            onClearFormatting = { viewModel.clearFormatting(isMultiple = false) },
           )
           Spacer(modifier = Modifier.height(8.dp))
           Row(

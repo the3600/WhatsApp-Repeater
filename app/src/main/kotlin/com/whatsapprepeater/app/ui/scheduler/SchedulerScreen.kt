@@ -1,5 +1,7 @@
 package com.whatsapprepeater.app.ui.scheduler
 
+import android.app.DatePickerDialog
+import android.app.TimePickerDialog
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -13,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -23,6 +26,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
@@ -53,6 +57,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -73,10 +78,12 @@ import com.whatsapprepeater.app.ui.theme.WarningAmber
 import com.whatsapprepeater.app.ui.theme.WarningContainer
 import com.whatsapprepeater.app.ui.theme.WhatsAppGreen
 import com.whatsapprepeater.app.ui.theme.WhatsAppGreenContainer
+import com.whatsapprepeater.core.model.SavedMessageList
 import com.whatsapprepeater.core.model.ScheduledTask
 import com.whatsapprepeater.core.model.ScheduledTaskStatus
 import com.whatsapprepeater.core.model.SchedulerRecurrence
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
@@ -249,6 +256,33 @@ fun SchedulerScreen(
             description = "Las programaciones locales emiten un recordatorio puntual en 1 toque respetando restricciones de Android e HyperOS.",
           )
         }
+      } else if (state.selectedTab == SchedulerTab.UPCOMING) {
+        val groupedByDay = visibleTasks.groupBy { task ->
+          SimpleDateFormat("EEEE, dd MMM", Locale.forLanguageTag("es")).format(Date(task.triggerAtMillis))
+        }
+        groupedByDay.forEach { (dayLabel, dayTasks) ->
+          item(key = "day_header_$dayLabel") {
+            Text(
+              text = dayLabel.replaceFirstChar { it.uppercase() },
+              style = MaterialTheme.typography.labelLarge,
+              color = WhatsAppGreen,
+              fontWeight = FontWeight.Bold,
+              modifier = Modifier.padding(top = 4.dp),
+            )
+          }
+          items(dayTasks, key = { "upcoming_${it.id}" }) { task ->
+            ScheduledTaskCard(
+              task = task,
+              onToggleEnabled = { viewModel.toggleTaskEnabled(task) },
+              onDuplicate = { viewModel.duplicateSchedule(task) },
+              onDelete = { viewModel.deleteTask(task.id) },
+              onExecuteNow = {
+                viewModel.prepareExecutionNow(task)
+                onExecutePreparedTask()
+              },
+            )
+          }
+        }
       } else {
         items(visibleTasks, key = { it.id }) { task ->
           ScheduledTaskCard(
@@ -269,9 +303,10 @@ fun SchedulerScreen(
   if (showCreateDialog) {
     CreateScheduleDialog(
       defaultTitle = "Recordatorio ${state.activeDraft.selectedContact?.name ?: ""}",
+      savedTemplates = state.savedTemplates,
       onDismiss = { showCreateDialog = false },
-      onCreate = { title, triggerAt, recurrence, expiration, notifyMins ->
-        viewModel.createFromCurrentDraft(title, triggerAt, recurrence, expiration, notifyMins)
+      onCreate = { title, triggerAt, recurrence, expiration, notifyMins, template ->
+        viewModel.createFromCurrentDraft(title, triggerAt, recurrence, expiration, notifyMins, template)
         showCreateDialog = false
       },
     )
@@ -371,18 +406,25 @@ private fun ScheduledTaskCard(
 @Composable
 private fun CreateScheduleDialog(
   defaultTitle: String,
+  savedTemplates: List<SavedMessageList>,
   onDismiss: () -> Unit,
-  onCreate: (title: String, triggerAtMillis: Long, recurrence: SchedulerRecurrence, expirationMillis: Long?, notifyBeforeMinutes: Int) -> Unit,
+  onCreate: (
+    title: String,
+    triggerAtMillis: Long,
+    recurrence: SchedulerRecurrence,
+    expirationMillis: Long?,
+    notifyBeforeMinutes: Int,
+    selectedTemplate: SavedMessageList?,
+  ) -> Unit,
 ) {
+  val context = LocalContext.current
   var title by remember { mutableStateOf(defaultTitle.take(48)) }
-  var offsetMinutes by remember { mutableIntStateOf(60) }
+  var selectedTemplate by remember { mutableStateOf<SavedMessageList?>(null) }
   var recurrence by remember { mutableStateOf(SchedulerRecurrence.NONE) }
   var expirationDays by remember { mutableStateOf<Int?>(null) }
-  val nowSnapshot = remember { System.currentTimeMillis() }
-  val triggerMillis by remember(offsetMinutes) {
-    mutableLongStateOf(nowSnapshot + offsetMinutes * 60_000L)
-  }
-  val previewDate = SimpleDateFormat("dd/MM HH:mm", Locale.getDefault()).format(Date(triggerMillis))
+  var notifyBeforeMinutes by remember { mutableIntStateOf(5) }
+  var chosenTriggerMillis by remember { mutableLongStateOf(System.currentTimeMillis() + 60 * 60_000L) }
+  val previewDate = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date(chosenTriggerMillis))
 
   AlertDialog(
     onDismissRequest = onDismiss,
@@ -391,7 +433,12 @@ private fun CreateScheduleDialog(
     textContentColor = TextSecondary,
     title = { Text("Nueva programación") },
     text = {
-      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+      Column(
+        modifier = Modifier
+          .heightIn(max = 420.dp)
+          .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+      ) {
         OutlinedTextField(
           value = title,
           onValueChange = { title = it.take(48) },
@@ -405,20 +452,128 @@ private fun CreateScheduleDialog(
           ),
         )
 
-        Text("Cuándo recordar ($previewDate):", style = MaterialTheme.typography.labelSmall, color = WhatsAppGreen)
+        if (savedTemplates.isNotEmpty()) {
+          Text("Contenido:", style = MaterialTheme.typography.labelSmall, color = TextSecondary)
+          Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+          ) {
+            val draftSelected = selectedTemplate == null
+            Surface(
+              shape = RoundedCornerShape(999.dp),
+              color = if (draftSelected) WhatsAppGreenContainer else CardSurfaceElevated,
+              border = BorderStroke(1.dp, if (draftSelected) WhatsAppGreen else OutlineSubtle),
+              modifier = Modifier
+                .clip(RoundedCornerShape(999.dp))
+                .clickable { selectedTemplate = null },
+            ) {
+              Text(
+                text = "Borrador actual",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (draftSelected) WhatsAppGreen else TextPrimary,
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+              )
+            }
+            savedTemplates.forEach { tpl ->
+              val sel = selectedTemplate?.id == tpl.id
+              Surface(
+                shape = RoundedCornerShape(999.dp),
+                color = if (sel) WhatsAppGreenContainer else CardSurfaceElevated,
+                border = BorderStroke(1.dp, if (sel) WhatsAppGreen else OutlineSubtle),
+                modifier = Modifier
+                  .clip(RoundedCornerShape(999.dp))
+                  .clickable { selectedTemplate = tpl },
+              ) {
+                Text(
+                  text = tpl.title,
+                  style = MaterialTheme.typography.labelSmall,
+                  color = if (sel) WhatsAppGreen else TextPrimary,
+                  modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                )
+              }
+            }
+          }
+        }
+
+        Text("Fecha y hora ($previewDate):", style = MaterialTheme.typography.labelSmall, color = WhatsAppGreen)
         Row(
           horizontalArrangement = Arrangement.spacedBy(6.dp),
           modifier = Modifier.horizontalScroll(rememberScrollState()),
         ) {
+          Surface(
+            shape = RoundedCornerShape(999.dp),
+            color = WhatsAppGreenContainer,
+            border = BorderStroke(1.dp, WhatsAppGreen),
+            modifier = Modifier
+              .clip(RoundedCornerShape(999.dp))
+              .clickable {
+                val cal = Calendar.getInstance().apply { timeInMillis = chosenTriggerMillis }
+                runCatching {
+                  DatePickerDialog(
+                    context,
+                    { _, year, month, day ->
+                      TimePickerDialog(
+                        context,
+                        { _, hour, minute ->
+                          val picked = Calendar.getInstance().apply {
+                            set(year, month, day, hour, minute, 0)
+                            set(Calendar.MILLISECOND, 0)
+                          }
+                          chosenTriggerMillis = picked.timeInMillis
+                        },
+                        cal.get(Calendar.HOUR_OF_DAY),
+                        cal.get(Calendar.MINUTE),
+                        true,
+                      ).show()
+                    },
+                    cal.get(Calendar.YEAR),
+                    cal.get(Calendar.MONTH),
+                    cal.get(Calendar.DAY_OF_MONTH),
+                  ).show()
+                }
+              },
+          ) {
+            Text(
+              text = "Elegir fecha y hora",
+              style = MaterialTheme.typography.labelSmall,
+              color = WhatsAppGreen,
+              fontWeight = FontWeight.Bold,
+              modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            )
+          }
           listOf(15 to "+15 min", 60 to "+1 hora", 240 to "+4 horas", 1440 to "+24 horas").forEach { (mins, label) ->
-            val selected = offsetMinutes == mins
+            Surface(
+              shape = RoundedCornerShape(999.dp),
+              color = CardSurfaceElevated,
+              border = BorderStroke(1.dp, OutlineSubtle),
+              modifier = Modifier
+                .clip(RoundedCornerShape(999.dp))
+                .clickable { chosenTriggerMillis = System.currentTimeMillis() + mins * 60_000L },
+            ) {
+              Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = TextPrimary,
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+              )
+            }
+          }
+        }
+
+        Text("Alerta previa antes de ejecutar:", style = MaterialTheme.typography.labelSmall, color = TextSecondary)
+        Row(
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
+          modifier = Modifier.horizontalScroll(rememberScrollState()),
+        ) {
+          listOf(0 to "Sin previa", 5 to "5 min antes", 15 to "15 min antes", 30 to "30 min antes").forEach { (mins, label) ->
+            val selected = notifyBeforeMinutes == mins
             Surface(
               shape = RoundedCornerShape(999.dp),
               color = if (selected) WhatsAppGreenContainer else CardSurfaceElevated,
               border = BorderStroke(1.dp, if (selected) WhatsAppGreen else OutlineSubtle),
               modifier = Modifier
                 .clip(RoundedCornerShape(999.dp))
-                .clickable { offsetMinutes = mins },
+                .clickable { notifyBeforeMinutes = mins },
             ) {
               Text(
                 text = label,
@@ -484,8 +639,8 @@ private fun CreateScheduleDialog(
     confirmButton = {
       TextButton(
         onClick = {
-          val expMillis = expirationDays?.let { nowSnapshot + it * 86_400_000L }
-          onCreate(title, System.currentTimeMillis() + offsetMinutes * 60_000L, recurrence, expMillis, 5)
+          val expMillis = expirationDays?.let { System.currentTimeMillis() + it * 86_400_000L }
+          onCreate(title, chosenTriggerMillis, recurrence, expMillis, notifyBeforeMinutes, selectedTemplate)
         },
       ) {
         Text("Guardar", color = WhatsAppGreen, fontWeight = FontWeight.Bold)

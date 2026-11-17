@@ -152,11 +152,7 @@ class AndroidAccessibilityDriver(
           viewIdResourceName = node.viewIdResourceName,
           text = node.text?.toString(),
           contentDescription = node.contentDescription?.toString(),
-          hintText = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            node.hintText?.toString()
-          } else {
-            null
-          },
+          hintText = node.hintText?.toString(),
           isClickable = node.isClickable,
           isEditable = node.isEditable,
           isEnabled = node.isEnabled,

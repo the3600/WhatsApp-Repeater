@@ -1,5 +1,6 @@
 package com.whatsapprepeater.app.ui.library
 
+import android.content.Intent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -33,6 +34,7 @@ import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.PushPin
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.StarOutline
 import androidx.compose.material3.AlertDialog
@@ -52,6 +54,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -79,6 +82,7 @@ fun SmartLibraryScreen(
   onOpenTemplateInEditor: (isMultipleMode: Boolean) -> Unit,
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
+  val context = LocalContext.current
   var editingMetaFor by remember { mutableStateOf<SavedMessageList?>(null) }
   var deletingId by remember { mutableStateOf<Long?>(null) }
 
@@ -234,6 +238,23 @@ fun SmartLibraryScreen(
             onToggleFavorite = { viewModel.toggleFavorite(template) },
             onTogglePinned = { viewModel.togglePinned(template) },
             onDuplicate = { viewModel.duplicateWithoutMutating(template) },
+            onShare = {
+              val text = if (template.isMultipleMode) {
+                template.messages.joinToString("\n\n")
+              } else {
+                template.singleMessage
+              }
+              if (text.isNotBlank()) {
+                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                  type = "text/plain"
+                  putExtra(Intent.EXTRA_SUBJECT, template.title)
+                  putExtra(Intent.EXTRA_TEXT, text)
+                }
+                runCatching {
+                  context.startActivity(Intent.createChooser(shareIntent, "Compartir plantilla"))
+                }
+              }
+            },
             onEditMetadata = { editingMetaFor = template },
             onDelete = { deletingId = template.id },
             onUse = {
@@ -340,6 +361,7 @@ private fun TemplateLibraryCard(
   onToggleFavorite: () -> Unit,
   onTogglePinned: () -> Unit,
   onDuplicate: () -> Unit,
+  onShare: () -> Unit,
   onEditMetadata: () -> Unit,
   onDelete: () -> Unit,
   onUse: () -> Unit,
@@ -428,6 +450,9 @@ private fun TemplateLibraryCard(
       Row {
         IconButton(onClick = onDuplicate) {
           Icon(Icons.Rounded.ContentCopy, contentDescription = "Duplicar sin modificar original", tint = TextPrimary)
+        }
+        IconButton(onClick = onShare) {
+          Icon(Icons.Rounded.Share, contentDescription = "Compartir plantilla", tint = TextPrimary)
         }
         IconButton(onClick = onEditMetadata) {
           Icon(Icons.Rounded.Edit, contentDescription = "Editar categoría y etiquetas", tint = TextSecondary)

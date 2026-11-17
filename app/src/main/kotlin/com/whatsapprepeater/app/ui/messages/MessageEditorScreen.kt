@@ -208,6 +208,8 @@ fun MessageEditorScreen(
             onUndo = { viewModel.undoActiveEditor(isMultiple = true) },
             onRedo = { viewModel.redoActiveEditor(isMultiple = true) },
             onOpenSearchReplace = { showSearchReplaceDialog = true },
+            onDuplicateFragment = { viewModel.duplicateFragment(isMultiple = true) },
+            onClearFormatting = { viewModel.clearFormatting(isMultiple = true) },
           )
           if (state.validationError != null) {
             Spacer(modifier = Modifier.height(6.dp))

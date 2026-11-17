@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -71,6 +72,14 @@ class MessageEditorViewModel(
   private val singleRedoStack = ArrayDeque<TextFieldValue>()
 
   init {
+    viewModelScope.launch {
+      val recovered = runCatching { container.settingsRepository.composerDraft.first() }.getOrDefault("")
+      if (recovered.isNotEmpty() && _newMessageField.value.text.isEmpty()) {
+        val clamped = recovered.take(SafetyLimits.MAX_MESSAGE_LENGTH)
+        _newMessageField.value = TextFieldValue(clamped, TextRange(clamped.length))
+        newMessageInput.value = clamped
+      }
+    }
     viewModelScope.launch {
       container.draft.collect { draft ->
         if (draft.singleMessage != _singleMessageField.value.text) {
@@ -156,6 +165,11 @@ class MessageEditorViewModel(
     _newMessageField.value = capped
     newMessageInput.value = capped.text
     historyVersion.value += 1
+    if (prev.text != capped.text) {
+      viewModelScope.launch {
+        runCatching { container.settingsRepository.updateComposerDraft(capped.text) }
+      }
+    }
   }
 
   fun onNewMessageInputChanged(text: String) {
@@ -183,6 +197,22 @@ class MessageEditorViewModel(
   fun insertSnippetInSingleMessage(snippet: String) {
     val updated = insertTextAtCursor(_singleMessageField.value, snippet)
     onSingleMessageFieldChanged(updated)
+  }
+
+  fun duplicateFragment(isMultiple: Boolean) {
+    if (isMultiple) {
+      onNewMessageFieldChanged(duplicateFragmentInField(_newMessageField.value))
+    } else {
+      onSingleMessageFieldChanged(duplicateFragmentInField(_singleMessageField.value))
+    }
+  }
+
+  fun clearFormatting(isMultiple: Boolean) {
+    if (isMultiple) {
+      onNewMessageFieldChanged(stripMarkdownMarkers(_newMessageField.value))
+    } else {
+      onSingleMessageFieldChanged(stripMarkdownMarkers(_singleMessageField.value))
+    }
   }
 
   fun undoActiveEditor(isMultiple: Boolean) {
@@ -294,6 +324,9 @@ class MessageEditorViewModel(
     newMessageInput.value = ""
     validationError.value = null
     historyVersion.value += 1
+    viewModelScope.launch {
+      runCatching { container.settingsRepository.updateComposerDraft("") }
+    }
   }
 
   fun editMessageAt(index: Int, updatedText: String) {
@@ -500,6 +533,48 @@ class MessageEditorViewModel(
         .take(SafetyLimits.MAX_MESSAGE_LENGTH)
       val cursor = (start + snippet.length).coerceAtMost(updated.length)
       return TextFieldValue(updated, TextRange(cursor))
+    }
+
+    fun duplicateFragmentInField(field: TextFieldValue): TextFieldValue {
+      val text = field.text
+      if (text.isEmpty()) return field
+      val start = field.selection.min.coerceIn(0, text.length)
+      val end = field.selection.max.coerceIn(start, text.length)
+      return if (start < end) {
+        val fragment = text.substring(start, end)
+        val updated = (text.substring(0, end) + fragment + text.substring(end))
+          .take(SafetyLimits.MAX_MESSAGE_LENGTH)
+        val newStart = end.coerceAtMost(updated.length)
+        val newEnd = (end + fragment.length).coerceAtMost(updated.length)
+        TextFieldValue(updated, TextRange(newStart, newEnd))
+      } else {
+        val lineStart = text.lastIndexOf('\n', (start - 1).coerceAtLeast(0)).let { if (it < 0) 0 else it + 1 }
+        val lineEnd = text.indexOf('\n', start).let { if (it < 0) text.length else it }
+        val currentLine = text.substring(lineStart, lineEnd)
+        if (currentLine.isEmpty()) return field
+        val updated = (text.substring(0, lineEnd) + "\n" + currentLine + text.substring(lineEnd))
+          .take(SafetyLimits.MAX_MESSAGE_LENGTH)
+        val cursor = (lineEnd + 1 + currentLine.length).coerceAtMost(updated.length)
+        TextFieldValue(updated, TextRange(cursor))
+      }
+    }
+
+    fun stripMarkdownMarkers(field: TextFieldValue): TextFieldValue {
+      val text = field.text
+      if (text.isEmpty()) return field
+      val start = field.selection.min.coerceIn(0, text.length)
+      val end = field.selection.max.coerceIn(start, text.length)
+      fun cleanMarkers(src: String): String =
+        src.replace("```", "").replace("*", "").replace("_", "").replace("~", "")
+      return if (start < end) {
+        val cleaned = cleanMarkers(text.substring(start, end))
+        val updated = (text.substring(0, start) + cleaned + text.substring(end))
+          .take(SafetyLimits.MAX_MESSAGE_LENGTH)
+        TextFieldValue(updated, TextRange(start, (start + cleaned.length).coerceAtMost(updated.length)))
+      } else {
+        val cleaned = cleanMarkers(text).take(SafetyLimits.MAX_MESSAGE_LENGTH)
+        TextFieldValue(cleaned, TextRange(cleaned.length))
+      }
     }
 
     internal fun formatMessageSnippet(current: String, marker: String): String = when {

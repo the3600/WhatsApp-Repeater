@@ -6,7 +6,15 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.test.platform.app.InstrumentationRegistry
 import com.whatsapprepeater.app.autoreply.AutoReplyRuntimeState
+import com.whatsapprepeater.app.ui.insights.AnalyticsScreen
+import com.whatsapprepeater.app.ui.insights.DiagnosticsScreen
+import com.whatsapprepeater.app.ui.insights.InsightsViewModel
+import com.whatsapprepeater.app.ui.library.SmartLibraryScreen
+import com.whatsapprepeater.app.ui.library.SmartLibraryViewModel
+import com.whatsapprepeater.app.ui.scheduler.SchedulerScreen
+import com.whatsapprepeater.app.ui.scheduler.SchedulerViewModel
 import com.whatsapprepeater.app.ui.autoreply.AutoReplyAwayScreen
 import com.whatsapprepeater.app.ui.autoreply.AutoReplyContactFiltersScreen
 import com.whatsapprepeater.app.ui.autoreply.AutoReplyDashboardScreen
@@ -316,5 +324,65 @@ class ComposeComponentsUiTest {
       }
     }
     composeRule.onNodeWithText("Historial de Respuestas").assertIsDisplayed()
+  }
+
+  @Test
+  fun smartLibraryScreen_rendersWithoutCrash() {
+    val context = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext
+    val libraryVm = SmartLibraryViewModel(AppContainer(context))
+    composeRule.setContent {
+      WhatsAppRepeaterTheme {
+        SmartLibraryScreen(viewModel = libraryVm, onBack = {}, onOpenTemplateInEditor = {})
+      }
+    }
+    composeRule.onNodeWithText("Centro Inteligente de Mensajes").assertIsDisplayed()
+  }
+
+  @Test
+  fun schedulerScreen_rendersWithoutCrash() {
+    val context = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext
+    val schedulerVm = SchedulerViewModel(AppContainer(context))
+    composeRule.setContent {
+      WhatsAppRepeaterTheme {
+        SchedulerScreen(
+          viewModel = schedulerVm,
+          onBack = {},
+          onOpenWizardToPrepareDraft = {},
+          onExecutePreparedTask = {},
+        )
+      }
+    }
+    composeRule.onNodeWithText("Programador Local").assertIsDisplayed()
+  }
+
+  @Test
+  fun diagnosticsScreen_rendersWithoutCrash() {
+    val context = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext
+    val insightsVm = InsightsViewModel(AppContainer(context))
+    composeRule.setContent {
+      WhatsAppRepeaterTheme {
+        DiagnosticsScreen(
+          viewModel = insightsVm,
+          onBack = {},
+          onOpenAccessibility = {},
+          onOpenAutoReplyPermissions = {},
+          onOpenUpdates = {},
+          onOpenEditor = {},
+        )
+      }
+    }
+    composeRule.onNodeWithText("Diagnóstico del Sistema").assertIsDisplayed()
+  }
+
+  @Test
+  fun analyticsScreen_rendersWithoutCrash() {
+    val context = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext
+    val insightsVm = InsightsViewModel(AppContainer(context))
+    composeRule.setContent {
+      WhatsAppRepeaterTheme {
+        AnalyticsScreen(viewModel = insightsVm, onBack = {})
+      }
+    }
+    composeRule.onNodeWithText("Analíticas Locales y Privadas").assertIsDisplayed()
   }
 }

@@ -27,7 +27,9 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 
 class InsightsViewModel(
   private val container: AppContainer,
@@ -38,6 +40,11 @@ class InsightsViewModel(
 
   private val _isXiaomiHyperOsDevice = MutableStateFlow(isXiaomiOrPocoDevice())
   val isXiaomiHyperOsDevice: StateFlow<Boolean> = _isXiaomiHyperOsDevice.asStateFlow()
+
+  private val _isCheckingConnectivity = MutableStateFlow(false)
+  val isCheckingConnectivity: StateFlow<Boolean> = _isCheckingConnectivity.asStateFlow()
+
+  private var lastConnectivityStatus: DiagnosticItem? = null
 
   val analytics: StateFlow<LocalAnalyticsSummary> = combine(
     container.historyRepository.observeRecentExecutions(limit = 200),
@@ -233,7 +240,50 @@ class InsightsViewModel(
       ),
     )
 
+    lastConnectivityStatus?.let { items.add(it) }
+
     _diagnostics.value = items
+  }
+
+  fun checkUpdaterConnectivity(context: Context) {
+    if (_isCheckingConnectivity.value) return
+    viewModelScope.launch {
+      _isCheckingConnectivity.value = true
+      try {
+        val settings = container.settingsRepository.settings.first()
+        val result = container.updateManager.probeUpdaterAvailability(
+          owner = settings.githubRepoOwner,
+          repo = settings.githubRepoName,
+        )
+        lastConnectivityStatus = result.fold(
+          onSuccess = { msg ->
+            DiagnosticItem(
+              id = "updater_network",
+              title = "Conectividad hacia GitHub Releases",
+              detail = msg,
+              recommendation = if (msg.contains("404")) "Verifica owner/repo público en Actualizaciones." else null,
+              status = if (msg.contains("HTTP 2")) DiagnosticStatus.OK else DiagnosticStatus.WARNING,
+              actionType = DiagnosticActionType.OPEN_UPDATES,
+              actionLabel = "Abrir Actualizador",
+            )
+          },
+          onFailure = { err ->
+            DiagnosticItem(
+              id = "updater_network",
+              title = "Conectividad hacia GitHub Releases",
+              detail = "Sin conexión o error de red: ${err.message ?: "No disponible"}",
+              recommendation = "Conéctate a Wi-Fi o datos móviles únicamente cuando desees buscar o descargar actualizaciones.",
+              status = DiagnosticStatus.WARNING,
+              actionType = DiagnosticActionType.OPEN_UPDATES,
+              actionLabel = "Ir a Actualizaciones",
+            )
+          },
+        )
+        runDiagnostics(context)
+      } finally {
+        _isCheckingConnectivity.value = false
+      }
+    }
   }
 
   private fun isXiaomiOrPocoDevice(): Boolean {

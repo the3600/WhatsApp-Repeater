@@ -1,5 +1,6 @@
 package com.whatsapprepeater.app.ui.history
 
+import android.content.Intent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -29,6 +30,7 @@ import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.PanTool
 import androidx.compose.material.icons.rounded.Phone
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -47,6 +49,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -84,6 +87,7 @@ fun HistoryDetailScreen(
   onBack: () -> Unit,
   onResumePending: () -> Unit,
 ) {
+  val context = LocalContext.current
   val record by viewModel.observeRecord(recordId).collectAsStateWithLifecycle(initialValue = null)
   var showDeleteConfirmDialog by remember { mutableStateOf(false) }
   var templateSaved by remember(recordId) { mutableStateOf(false) }
@@ -338,6 +342,27 @@ fun HistoryDetailScreen(
           },
         )
       }
+      LargeSecondaryButton(
+        text = "Compartir resumen de auditoría",
+        icon = Icons.Rounded.Share,
+        onClick = {
+          val summary = buildString {
+            appendLine("WhatsApp Repeater — Resumen de envío")
+            appendLine("Contacto: ${rec.contactName} (${rec.contactPhone})")
+            appendLine("Fecha: $dateStr")
+            appendLine("Confirmados: ${rec.confirmedCount}/${rec.scheduledCount} • Cancelados: ${rec.cancelledCount} • Errores: ${rec.errorCount}")
+            appendLine("Estado: ${rec.statusDetail}")
+          }
+          val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, "Resumen lote ${rec.batchCode}")
+            putExtra(Intent.EXTRA_TEXT, summary)
+          }
+          runCatching {
+            context.startActivity(Intent.createChooser(intent, "Compartir resumen"))
+          }
+        },
+      )
       TextButton(
         onClick = { showDeleteConfirmDialog = true },
       ) {
