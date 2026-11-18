@@ -54,6 +54,9 @@ sealed interface WhatsAppScreen {
     val inputNode: UiNodeSnapshot?,
     val sendButtonNode: UiNodeSnapshot?,
     val micButtonPresent: Boolean,
+    val headerCandidates: List<HeaderCandidate> = headerTexts.mapIndexed { idx, txt ->
+      HeaderCandidate(text = txt, isPrimaryTitle = idx == 0)
+    },
   ) : WhatsAppScreen
 
   data class HomeChatList(

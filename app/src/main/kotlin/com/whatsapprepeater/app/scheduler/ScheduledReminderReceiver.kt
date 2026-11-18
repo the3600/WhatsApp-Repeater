@@ -3,6 +3,7 @@ package com.whatsapprepeater.app.scheduler
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import com.whatsapprepeater.app.AppContainer
 import com.whatsapprepeater.app.WhatsAppRepeaterApp
 import com.whatsapprepeater.core.model.ScheduledTaskStatus
 import com.whatsapprepeater.core.model.SchedulerLogic
@@ -12,15 +13,20 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
- * Recibe alarmas previas/principales y eventos de reinicio del sistema para mantener
- * activas las programaciones locales o advertir tareas vencidas/omitidas.
+ * Recibe alarmas previas/principales y eventos de reinicio o cambio de hora del sistema para
+ * mantener activas las programaciones y ejecutar el envío real cuando Android e HyperOS lo permiten.
  */
 class ScheduledReminderReceiver : BroadcastReceiver() {
   override fun onReceive(context: Context, intent: Intent?) {
     val app = context.applicationContext as? WhatsAppRepeaterApp ?: return
     val action = intent?.action
 
-    if (action == Intent.ACTION_BOOT_COMPLETED || action == Intent.ACTION_MY_PACKAGE_REPLACED) {
+    if (
+      action == Intent.ACTION_BOOT_COMPLETED ||
+      action == Intent.ACTION_MY_PACKAGE_REPLACED ||
+      action == Intent.ACTION_TIME_CHANGED ||
+      action == Intent.ACTION_TIMEZONE_CHANGED
+    ) {
       val pendingBoot = goAsync()
       CoroutineScope(Dispatchers.IO).launch {
         try {
@@ -54,20 +60,31 @@ class ScheduledReminderReceiver : BroadcastReceiver() {
     val tasks = repo.getAllOnce()
 
     for (task in tasks) {
-      if (!task.enabled) continue
+      if (!task.enabled || task.status == ScheduledTaskStatus.PAUSED) continue
       if (task.isExpiredAt(now)) {
         repo.saveTask(task.copy(enabled = false, status = ScheduledTaskStatus.EXPIRED, updatedAtMillis = now))
         continue
       }
       if (task.triggerAtMillis <= now) {
+        val reason = "La hora programada pasó mientras el dispositivo estaba apagado o restringido."
         if (!settings.vacationPauseEnabled) {
           helper.showOverdueReminderNotification(task)
         }
         val nextTrigger = SchedulerLogic.computeNextTriggerMillis(task, now)
         val updated = if (nextTrigger != null) {
-          task.copy(triggerAtMillis = nextTrigger, status = ScheduledTaskStatus.FAILED, updatedAtMillis = now)
+          task.copy(
+            triggerAtMillis = nextTrigger,
+            status = ScheduledTaskStatus.FAILED,
+            lastFailureReason = reason,
+            updatedAtMillis = now,
+          )
         } else {
-          task.copy(enabled = false, status = ScheduledTaskStatus.FAILED, updatedAtMillis = now)
+          task.copy(
+            enabled = false,
+            status = ScheduledTaskStatus.FAILED,
+            lastFailureReason = reason,
+            updatedAtMillis = now,
+          )
         }
         repo.saveTask(updated)
         if (updated.enabled) helper.scheduleTaskReminder(updated)
@@ -83,8 +100,9 @@ class ScheduledReminderReceiver : BroadcastReceiver() {
     isPreAlert: Boolean,
   ) {
     val repo = app.container.scheduledTaskRepository
+    val helper = app.container.schedulerAlarmHelper
     val task = repo.getById(taskId) ?: return
-    if (!task.enabled) return
+    if (!task.enabled || task.status == ScheduledTaskStatus.PAUSED) return
 
     val now = System.currentTimeMillis()
     val settings = app.container.settingsRepository.settings.first()
@@ -102,7 +120,7 @@ class ScheduledReminderReceiver : BroadcastReceiver() {
 
     if (isPreAlert) {
       if (!settings.vacationPauseEnabled) {
-        app.container.schedulerAlarmHelper.showPreAlertNotification(task)
+        helper.showPreAlertNotification(task)
       }
       return
     }
@@ -124,12 +142,46 @@ class ScheduledReminderReceiver : BroadcastReceiver() {
       }
       repo.saveTask(updated)
       if (updated.enabled) {
-        app.container.schedulerAlarmHelper.scheduleTaskReminder(updated)
+        helper.scheduleTaskReminder(updated)
       }
       return
     }
 
-    app.container.schedulerAlarmHelper.showDueNotification(task)
+    if (task.autoExecuteWhenReady) {
+      when (val launch = app.container.executeScheduledTaskIfReady(task)) {
+        AppContainer.ScheduledLaunchResult.Started -> {
+          helper.showAutoExecutionStartedNotification(task)
+          return
+        }
+        is AppContainer.ScheduledLaunchResult.Blocked -> {
+          helper.showInterventionRequiredNotification(task, launch.reason)
+          val nextTrigger = SchedulerLogic.computeNextTriggerMillis(task, now)
+          val updated = if (nextTrigger != null) {
+            task.copy(
+              triggerAtMillis = nextTrigger,
+              status = ScheduledTaskStatus.FAILED,
+              lastFailureReason = launch.reason,
+              updatedAtMillis = now,
+            )
+          } else {
+            task.copy(
+              enabled = false,
+              status = ScheduledTaskStatus.FAILED,
+              lastFailureReason = launch.reason,
+              updatedAtMillis = now,
+            )
+          }
+          repo.saveTask(updated)
+          if (nextTrigger != null && updated.enabled) {
+            helper.scheduleTaskReminder(updated)
+          }
+          return
+        }
+      }
+    }
+
+    // Modo aviso manual: no simula envío; notifica al usuario para confirmar y ejecutar.
+    helper.showDueNotification(task)
     val nextTrigger = SchedulerLogic.computeNextTriggerMillis(task, now)
     val updated = if (nextTrigger != null) {
       task.copy(
@@ -145,7 +197,7 @@ class ScheduledReminderReceiver : BroadcastReceiver() {
     }
     repo.saveTask(updated)
     if (nextTrigger != null && updated.enabled) {
-      app.container.schedulerAlarmHelper.scheduleTaskReminder(updated)
+      helper.scheduleTaskReminder(updated)
     }
   }
 }

@@ -84,4 +84,46 @@ class DynamicVariablesAndSchedulerTest {
     assertTrue(expiringTask.isExpiredAt(fridayFourPm + 7_200_000L))
     assertNull(SchedulerLogic.computeNextTriggerMillis(expiringTask, fridayFourPm, zone))
   }
+
+  @Test
+  fun `aligns and advances custom weekday recurrence and ignores paused tasks in duplicate check`() {
+    // Lunes 16 nov 2026 -> custom days Miércoles(3) y Viernes(5)
+    val customTask = ScheduledTask(
+      id = 10L,
+      title = "Rutina específica",
+      contactId = "c1",
+      contactName = "Ana",
+      contactPhone = "+525576294320",
+      isMultipleMode = true,
+      messages = listOf("Paso 1", "Paso 2"),
+      singleMessage = "",
+      repeatCount = 1,
+      minIntervalSeconds = 10,
+      maxIntervalSeconds = 20,
+      preferWhatsAppBusiness = false,
+      triggerAtMillis = mondayTenAm,
+      recurrence = SchedulerRecurrence.CUSTOM_DAYS,
+      customWeekDays = listOf(3, 5),
+    )
+
+    val aligned = SchedulerLogic.normalizeWeekDaysForFirstTrigger(
+      startMillis = mondayTenAm,
+      recurrence = SchedulerRecurrence.CUSTOM_DAYS,
+      customWeekDays = listOf(3, 5),
+      zoneId = zone,
+    )
+    val alignedZdt = ZonedDateTime.ofInstant(java.time.Instant.ofEpochMilli(aligned), zone)
+    assertEquals(java.time.DayOfWeek.WEDNESDAY, alignedZdt.dayOfWeek)
+
+    val nextAfterWed = SchedulerLogic.computeNextTriggerMillis(
+      task = customTask.copy(triggerAtMillis = aligned),
+      fromMillis = aligned,
+      zoneId = zone,
+    )!!
+    val nextZdt = ZonedDateTime.ofInstant(java.time.Instant.ofEpochMilli(nextAfterWed), zone)
+    assertEquals(java.time.DayOfWeek.FRIDAY, nextZdt.dayOfWeek)
+
+    val pausedExisting = customTask.copy(id = 11L, status = ScheduledTaskStatus.PAUSED, enabled = false)
+    assertNull(SchedulerLogic.findDuplicateConflict(customTask.copy(id = 0L), listOf(pausedExisting)))
+  }
 }

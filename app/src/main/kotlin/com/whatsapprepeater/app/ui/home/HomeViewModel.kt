@@ -117,7 +117,13 @@ class HomeViewModel(
     val templates = ctrl[3] as List<com.whatsapprepeater.core.model.SavedMessageList>
 
     val nextTask = tasks
-      .filter { it.enabled && it.status != ScheduledTaskStatus.EXPIRED && it.status != ScheduledTaskStatus.FAILED }
+      .filter {
+        it.enabled &&
+          it.status != ScheduledTaskStatus.EXPIRED &&
+          it.status != ScheduledTaskStatus.FAILED &&
+          it.status != ScheduledTaskStatus.PAUSED &&
+          it.status != ScheduledTaskStatus.COMPLETED
+      }
       .minByOrNull { it.triggerAtMillis }
     val failedOrExpired = tasks.count {
       it.status == ScheduledTaskStatus.FAILED || it.status == ScheduledTaskStatus.EXPIRED

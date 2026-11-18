@@ -56,9 +56,11 @@ data class BackupScheduledTaskDto(
   val preferWhatsAppBusiness: Boolean = false,
   val triggerAtMillis: Long,
   val recurrence: String = "NONE",
+  val customWeekDays: List<Int> = emptyList(),
   val expirationMillis: Long? = null,
   val enabled: Boolean = true,
   val notifyBeforeMinutes: Int = 5,
+  val autoExecuteWhenReady: Boolean = true,
   val createdAtMillis: Long = 0L,
   val updatedAtMillis: Long = 0L,
 )
@@ -364,9 +366,11 @@ object LocalBackupManager {
           preferWhatsAppBusiness = t.preferWhatsAppBusiness,
           triggerAtMillis = t.triggerAtMillis,
           recurrence = t.recurrence.name,
+          customWeekDays = t.customWeekDays,
           expirationMillis = t.expirationMillis,
           enabled = t.enabled,
           notifyBeforeMinutes = t.notifyBeforeMinutes,
+          autoExecuteWhenReady = t.autoExecuteWhenReady,
           createdAtMillis = t.createdAtMillis,
           updatedAtMillis = t.updatedAtMillis,
         )
@@ -541,10 +545,12 @@ object LocalBackupManager {
         triggerAtMillis = dto.triggerAtMillis,
         recurrence = runCatching { SchedulerRecurrence.valueOf(dto.recurrence) }
           .getOrDefault(SchedulerRecurrence.NONE),
+        customWeekDays = dto.customWeekDays,
         expirationMillis = dto.expirationMillis,
         enabled = dto.enabled,
         notifyBeforeMinutes = dto.notifyBeforeMinutes,
-        status = ScheduledTaskStatus.PENDING,
+        autoExecuteWhenReady = dto.autoExecuteWhenReady,
+        status = if (dto.enabled) ScheduledTaskStatus.PENDING else ScheduledTaskStatus.PAUSED,
         createdAtMillis = dto.createdAtMillis,
         updatedAtMillis = dto.updatedAtMillis,
       )

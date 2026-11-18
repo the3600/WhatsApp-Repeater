@@ -3,6 +3,7 @@ package com.whatsapprepeater.app
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation3.runtime.NavKey
@@ -58,6 +59,7 @@ fun MainNavigation(container: AppContainer) {
     initialValue = AppSettings(),
   )
   val pendingScheduledId by container.pendingScheduleLaunch.collectAsStateWithLifecycle()
+  val pendingActiveAutomation by container.pendingActiveAutomationLaunch.collectAsStateWithLifecycle()
 
   fun resetToRoot(root: NavKey) {
     if (backStack.size == 1 && backStack.firstOrNull() == root) return
@@ -76,6 +78,13 @@ fun MainNavigation(container: AppContainer) {
       resetToRoot(HomeRoute)
       backStack.add(ConfirmationRoute)
     }
+  }
+
+  LaunchedEffect(pendingActiveAutomation) {
+    if (!pendingActiveAutomation) return@LaunchedEffect
+    container.clearPendingActiveAutomationLaunch()
+    resetToRoot(HomeRoute)
+    backStack.add(AutomationRoute)
   }
 
   fun navigateBackToOrAdd(target: NavKey) {
@@ -209,6 +218,7 @@ fun MainNavigation(container: AppContainer) {
           onBack = { backStack.removeLastOrNull() },
           onDoneToHome = { resetToRoot(HomeRoute) },
           onNavigateToHistory = { resetToRoot(HistoryRoute) },
+          onOpenPermissions = { backStack.add(PermissionsRoute) },
         )
       }
 
@@ -354,12 +364,14 @@ fun MainNavigation(container: AppContainer) {
         )
       }
       entry<SchedulerRoute> {
-        val vm: SchedulerViewModel = viewModel(factory = SchedulerViewModel.factory(container))
+        val context = LocalContext.current
+        val vm: SchedulerViewModel = viewModel(factory = SchedulerViewModel.factory(container, context))
         SchedulerScreen(
           viewModel = vm,
           onBack = { backStack.removeLastOrNull() },
           onOpenWizardToPrepareDraft = { backStack.add(ContactPickerRoute) },
           onExecutePreparedTask = { backStack.add(ConfirmationRoute) },
+          onOpenPermissions = { backStack.add(PermissionsRoute) },
         )
       }
       entry<DiagnosticsRoute> {

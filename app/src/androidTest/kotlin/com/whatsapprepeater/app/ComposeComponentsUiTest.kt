@@ -15,6 +15,8 @@ import com.whatsapprepeater.app.ui.library.SmartLibraryScreen
 import com.whatsapprepeater.app.ui.library.SmartLibraryViewModel
 import com.whatsapprepeater.app.ui.scheduler.SchedulerScreen
 import com.whatsapprepeater.app.ui.scheduler.SchedulerViewModel
+import com.whatsapprepeater.app.ui.scheduler.VisualMaterialDatePickerModal
+import com.whatsapprepeater.app.ui.scheduler.VisualMaterialTimePickerModal
 import com.whatsapprepeater.app.ui.autoreply.AutoReplyAwayScreen
 import com.whatsapprepeater.app.ui.autoreply.AutoReplyContactFiltersScreen
 import com.whatsapprepeater.app.ui.autoreply.AutoReplyDashboardScreen
@@ -339,9 +341,9 @@ class ComposeComponentsUiTest {
   }
 
   @Test
-  fun schedulerScreen_rendersWithoutCrash() {
+  fun schedulerScreen_showsNewScheduleButtonAndOpensFullVisualEditor() {
     val context = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext
-    val schedulerVm = SchedulerViewModel(AppContainer(context))
+    val schedulerVm = SchedulerViewModel(AppContainer(context), context)
     composeRule.setContent {
       WhatsAppRepeaterTheme {
         SchedulerScreen(
@@ -353,6 +355,41 @@ class ComposeComponentsUiTest {
       }
     }
     composeRule.onNodeWithText("Programador Local").assertIsDisplayed()
+    composeRule.onNodeWithText("Nueva programación").assertIsDisplayed()
+    composeRule.onNodeWithText("Nueva programación").performClick()
+    composeRule.onNodeWithText("Guardar programación").assertIsDisplayed()
+    composeRule.onNodeWithText("Mensaje único").assertIsDisplayed()
+    composeRule.onNodeWithText("Secuencia múltiple").assertIsDisplayed()
+  }
+
+  @Test
+  fun visualDatePickerModal_rendersCalendarWithoutCrash() {
+    val initialMillis = 1_800_000_000_000L
+    composeRule.setContent {
+      WhatsAppRepeaterTheme {
+        VisualMaterialDatePickerModal(
+          initialMillis = initialMillis,
+          onDismiss = {},
+          onDatePicked = {},
+        )
+      }
+    }
+    composeRule.onNodeWithText("Aplicar fecha").assertIsDisplayed()
+  }
+
+  @Test
+  fun visualTimePickerModal_rendersClockWithoutCrash() {
+    val initialMillis = 1_800_000_000_000L
+    composeRule.setContent {
+      WhatsAppRepeaterTheme {
+        VisualMaterialTimePickerModal(
+          initialMillis = initialMillis,
+          onDismiss = {},
+          onTimePicked = {},
+        )
+      }
+    }
+    composeRule.onNodeWithText("Aplicar hora").assertIsDisplayed()
   }
 
   @Test

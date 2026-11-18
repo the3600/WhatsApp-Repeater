@@ -51,6 +51,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.whatsapprepeater.app.scheduler.SchedulerAlarmHelper
 import com.whatsapprepeater.app.service.AccessibilitySettingsHelper
 import com.whatsapprepeater.app.ui.components.LargePrimaryButton
 import com.whatsapprepeater.app.ui.components.LargeSecondaryButton
@@ -94,6 +95,11 @@ fun PermissionsAccessibilityScreen(
     contract = ActivityResultContracts.RequestPermission(),
   ) { granted -> notificationsGranted = granted }
 
+  val alarmHelper = remember(context) { SchedulerAlarmHelper(context.applicationContext) }
+  var exactAlarmGranted by remember {
+    mutableStateOf(alarmHelper.canScheduleExactAlarms())
+  }
+
   fun refreshAll() {
     enabledInSettings = AccessibilitySettingsHelper.isAccessibilityEnabledInSettings(context)
     contactsGranted = ContextCompat.checkSelfPermission(
@@ -103,6 +109,7 @@ fun PermissionsAccessibilityScreen(
     notificationsGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
       ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
       PackageManager.PERMISSION_GRANTED
+    exactAlarmGranted = alarmHelper.canScheduleExactAlarms()
   }
 
   DisposableEffect(lifecycleOwner) {
@@ -287,6 +294,45 @@ fun PermissionsAccessibilityScreen(
               onClick = { notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) },
             )
           }
+          Spacer(modifier = Modifier.height(8.dp))
+          Row(
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            Text("Alarmas y recordatorios puntuales", color = TextSecondary, style = MaterialTheme.typography.bodyMedium)
+            Text(
+              if (exactAlarmGranted) "Concedido" else "Recomendado",
+              color = if (exactAlarmGranted) WhatsAppGreen else WarningAmber,
+              fontWeight = FontWeight.SemiBold,
+              style = MaterialTheme.typography.bodySmall,
+            )
+          }
+          if (!exactAlarmGranted) {
+            Spacer(modifier = Modifier.height(10.dp))
+            LargeSecondaryButton(
+              text = "Autorizar alarmas exactas",
+              onClick = { alarmHelper.openExactAlarmSettings() },
+            )
+          }
+        }
+      }
+
+      item {
+        SectionCard {
+          Text("Estabilidad en Xiaomi / POCO HyperOS", style = MaterialTheme.typography.titleMedium, color = WhatsAppGreen)
+          Spacer(modifier = Modifier.height(6.dp))
+          Text(
+            text = "En Info de la app → Ahorro de batería, elige \"Sin restricciones\" y habilita \"Inicio automático\" si usas el Programador o Autorespuestas para evitar que el sistema cierre el servicio.",
+            style = MaterialTheme.typography.bodySmall,
+            color = TextSecondary,
+          )
+          Spacer(modifier = Modifier.height(10.dp))
+          LargeSecondaryButton(
+            text = "Abrir Info de la app (Batería / Permisos)",
+            icon = Icons.AutoMirrored.Rounded.OpenInNew,
+            onClick = { AccessibilitySettingsHelper.openAppDetailsSettings(context) },
+          )
         }
       }
     }

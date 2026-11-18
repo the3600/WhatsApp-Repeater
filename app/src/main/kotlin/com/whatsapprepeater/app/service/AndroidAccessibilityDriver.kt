@@ -5,9 +5,9 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.graphics.Rect
-import android.net.Uri
 import android.os.Bundle
 import android.view.accessibility.AccessibilityNodeInfo
+import androidx.core.net.toUri
 import com.whatsapprepeater.core.automation.AccessibilityDriver
 import com.whatsapprepeater.core.automation.NodeBounds
 import com.whatsapprepeater.core.automation.ScreenSnapshot
@@ -63,7 +63,7 @@ class AndroidAccessibilityDriver(
     for (pkg in packagesToTry) {
       if (!isPackageInstalled(pkg)) continue
       val deepLink = Intent(Intent.ACTION_VIEW).apply {
-        data = Uri.parse("https://api.whatsapp.com/send?phone=$digits")
+        data = "https://api.whatsapp.com/send?phone=$digits".toUri()
         setPackage(pkg)
         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
       }
@@ -129,19 +129,25 @@ class AndroidAccessibilityDriver(
     var counter = 0
 
     fun mapNode(node: AccessibilityNodeInfo, depth: Int): UiNodeSnapshot? {
-      if (depth > 24 || counter >= 350) return null
+      if (depth > 28 || counter >= 1500) return null
       return runCatching {
+        val visible = node.isVisibleToUser
         val id = "n_${counter++}"
         nodeRegistry[id] = node
 
         val rect = Rect()
         node.getBoundsInScreen(rect)
 
-        val children = buildList {
-          val childCount = node.childCount
-          for (i in 0 until childCount) {
-            val child = runCatching { node.getChild(i) }.getOrNull() ?: continue
-            mapNode(child, depth + 1)?.let { add(it) }
+        val children = if (!visible && depth >= 3) {
+          emptyList()
+        } else {
+          buildList {
+            val childCount = node.childCount
+            for (i in 0 until childCount) {
+              if (counter >= 1500) break
+              val child = runCatching { node.getChild(i) }.getOrNull() ?: continue
+              mapNode(child, depth + 1)?.let { add(it) }
+            }
           }
         }
 
@@ -179,6 +185,7 @@ class AndroidAccessibilityDriver(
   override fun clickNode(nodeId: String): Boolean {
     val node = synchronized(nodesLock) { activeNodes[nodeId] } ?: return false
     return runCatching {
+      node.refresh()
       if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
         return@runCatching true
       }
@@ -198,10 +205,17 @@ class AndroidAccessibilityDriver(
   override fun setText(nodeId: String, text: String): Boolean {
     val node = synchronized(nodesLock) { activeNodes[nodeId] } ?: return false
     return runCatching {
+      node.refresh()
       node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
       val args = Bundle().apply {
         putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
       }
+      if (node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) {
+        return@runCatching true
+      }
+      // Si el EditText aún no activó foco de entrada/IME en HyperOS o WhatsApp, pulsar y reintentar.
+      node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+      node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
       node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
     }.getOrDefault(false)
   }

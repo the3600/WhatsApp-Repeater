@@ -35,6 +35,7 @@ import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.StopCircle
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -44,7 +45,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -84,10 +90,18 @@ fun AutomationScreen(
   onBack: () -> Unit,
   onDoneToHome: () -> Unit,
   onNavigateToHistory: () -> Unit,
+  onOpenPermissions: () -> Unit = {},
 ) {
   val view = LocalView.current
   val state by viewModel.uiState.collectAsStateWithLifecycle()
   val engine = state.engineState
+  var dismissedErrorTimestamp by remember { mutableLongStateOf(0L) }
+
+  LaunchedEffect(engine.status) {
+    if (engine.status != AutomationStatus.ERROR) {
+      dismissedErrorTimestamp = 0L
+    }
+  }
 
   // Mantener pantalla encendida si está activo en preferencias durante una ejecución.
   DisposableEffect(engine.isRunning, state.settings.keepScreenOnDuringAutomation) {
@@ -113,6 +127,28 @@ fun AutomationScreen(
       onRetry = viewModel::repeatSameConfiguration,
       onNavigateToHistory = onNavigateToHistory,
       onReturnHome = onDoneToHome,
+      onOpenPermissions = onOpenPermissions,
+    )
+  }
+
+  if (
+    engine.status == AutomationStatus.ERROR &&
+    !engine.errorMessage.isNullOrBlank() &&
+    dismissedErrorTimestamp != engine.finishedAtMillis
+  ) {
+    InterventionRequiredDialog(
+      state = state,
+      onRetry = {
+        dismissedErrorTimestamp = engine.finishedAtMillis
+        viewModel.repeatSameConfiguration()
+      },
+      onStopAndDismiss = {
+        dismissedErrorTimestamp = engine.finishedAtMillis
+      },
+      onOpenPermissions = {
+        dismissedErrorTimestamp = engine.finishedAtMillis
+        onOpenPermissions()
+      },
     )
   }
 
@@ -142,6 +178,7 @@ private fun RunningOrStoppedContent(
   onRetry: () -> Unit,
   onNavigateToHistory: () -> Unit,
   onReturnHome: () -> Unit,
+  onOpenPermissions: () -> Unit,
 ) {
   val engine = state.engineState
   val contact = engine.contact ?: state.draft.selectedContact
@@ -370,15 +407,49 @@ private fun RunningOrStoppedContent(
       }
 
       if (!engine.errorMessage.isNullOrBlank()) {
+        val expectedContact = engine.contact ?: state.draft.selectedContact
         item {
           SectionCard(borderColor = DangerRed, containerColor = DangerContainer) {
             Row(verticalAlignment = Alignment.CenterVertically) {
               Icon(Icons.Rounded.ErrorOutline, contentDescription = null, tint = DangerRed)
               Spacer(modifier = Modifier.width(8.dp))
-              Text("Intervención requerida", style = MaterialTheme.typography.titleMedium, color = DangerRed)
+              Text("Intervención requerida", style = MaterialTheme.typography.titleMedium, color = DangerRed, fontWeight = FontWeight.Bold)
             }
-            Spacer(modifier = Modifier.height(6.dp))
+            if (engine.diagnosticStage.isNotBlank()) {
+              Spacer(modifier = Modifier.height(6.dp))
+              StatusBadge(
+                label = "Etapa: ${engine.diagnosticStage}",
+                containerColor = CardSurfaceElevated,
+                contentColor = DangerRed,
+              )
+            }
+            if (expectedContact != null) {
+              Spacer(modifier = Modifier.height(6.dp))
+              Text(
+                text = "Destinatario esperado: ${expectedContact.name} (${expectedContact.phoneNumber})",
+                style = MaterialTheme.typography.bodySmall,
+                color = WhatsAppGreen,
+                fontWeight = FontWeight.SemiBold,
+              )
+            }
+            if (engine.observedHeaderSummary.isNotBlank()) {
+              Spacer(modifier = Modifier.height(4.dp))
+              Text(
+                text = "Detectado en pantalla: ${engine.observedHeaderSummary}",
+                style = MaterialTheme.typography.bodySmall,
+                color = TextSecondary,
+              )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
             Text(engine.errorMessage ?: "", style = MaterialTheme.typography.bodyMedium, color = TextPrimary)
+            if (engine.diagnosticStage.contains("Accesibilidad", ignoreCase = true)) {
+              Spacer(modifier = Modifier.height(10.dp))
+              LargeSecondaryButton(
+                text = "Revisar Accesibilidad",
+                icon = Icons.Rounded.AccessibilityNew,
+                onClick = onOpenPermissions,
+              )
+            }
           }
         }
       }
@@ -667,4 +738,100 @@ private fun CompletionRow(label: String, value: String, valueColor: Color) {
       modifier = Modifier.weight(0.55f),
     )
   }
+}
+
+@Composable
+private fun InterventionRequiredDialog(
+  state: AutomationUiState,
+  onRetry: () -> Unit,
+  onStopAndDismiss: () -> Unit,
+  onOpenPermissions: () -> Unit,
+) {
+  val engine = state.engineState
+  val contact = engine.contact ?: state.draft.selectedContact
+  val isAccessibilityStage = engine.diagnosticStage.contains("Accesibilidad", ignoreCase = true)
+
+  AlertDialog(
+    onDismissRequest = onStopAndDismiss,
+    containerColor = CardSurface,
+    titleContentColor = DangerRed,
+    textContentColor = TextPrimary,
+    title = {
+      Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(Icons.Rounded.ErrorOutline, contentDescription = null, tint = DangerRed)
+        Spacer(modifier = Modifier.width(8.dp))
+        Text("Intervención requerida", fontWeight = FontWeight.Bold)
+      }
+    },
+    text = {
+      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (engine.diagnosticStage.isNotBlank()) {
+          StatusBadge(
+            label = "Etapa detenida: ${engine.diagnosticStage}",
+            containerColor = DangerContainer,
+            contentColor = DangerRed,
+          )
+        }
+        if (contact != null) {
+          Column(
+            modifier = Modifier
+              .fillMaxWidth()
+              .clip(RoundedCornerShape(12.dp))
+              .background(CardSurfaceElevated)
+              .padding(10.dp),
+          ) {
+            Text("Destinatario esperado", style = MaterialTheme.typography.labelSmall, color = TextSecondary)
+            Text(
+              text = "${contact.name} (${contact.phoneNumber})",
+              style = MaterialTheme.typography.bodyMedium,
+              color = WhatsAppGreen,
+              fontWeight = FontWeight.Bold,
+            )
+          }
+        }
+        if (engine.observedHeaderSummary.isNotBlank()) {
+          Column(
+            modifier = Modifier
+              .fillMaxWidth()
+              .clip(RoundedCornerShape(12.dp))
+              .background(CardSurfaceElevated)
+              .padding(10.dp),
+          ) {
+            Text("Detectado en cabecera", style = MaterialTheme.typography.labelSmall, color = TextSecondary)
+            Text(
+              text = engine.observedHeaderSummary,
+              style = MaterialTheme.typography.bodySmall,
+              color = TextPrimary,
+            )
+          }
+        }
+        Text(
+          text = engine.errorMessage.orEmpty(),
+          style = MaterialTheme.typography.bodyMedium,
+          color = TextPrimary,
+        )
+        Text(
+          text = "El protocolo de seguridad detuvo el envío para evitar escribir en el chat equivocado.",
+          style = MaterialTheme.typography.bodySmall,
+          color = TextSecondary,
+        )
+      }
+    },
+    confirmButton = {
+      if (isAccessibilityStage) {
+        TextButton(onClick = onOpenPermissions) {
+          Text("Abrir Accesibilidad", color = WarningAmber, fontWeight = FontWeight.Bold)
+        }
+      } else {
+        TextButton(onClick = onRetry) {
+          Text("Reintentar envío", color = WhatsAppGreen, fontWeight = FontWeight.Bold)
+        }
+      }
+    },
+    dismissButton = {
+      TextButton(onClick = onStopAndDismiss) {
+        Text("Detener y revisar", color = TextSecondary)
+      }
+    },
+  )
 }

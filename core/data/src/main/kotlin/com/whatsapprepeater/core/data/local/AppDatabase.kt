@@ -29,7 +29,7 @@ abstract class AppDatabase : RoomDatabase() {
 
   companion object {
     const val DB_NAME = "whatsapp_repeater.db"
-    const val CURRENT_VERSION = 5
+    const val CURRENT_VERSION = 6
 
     /**
      * Migración controlada 1 -> 2: conserva `execution_history` y agrega tablas de listas y configuración.
@@ -205,6 +205,25 @@ abstract class AppDatabase : RoomDatabase() {
           )
           """.trimIndent(),
         )
+      }
+    }
+
+    /**
+     * Migración controlada 5 -> 6: añade días específicos, ejecución automática y motivo real de fallo al Programador.
+     */
+    val MIGRATION_5_6: Migration = object : Migration(5, 6) {
+      override fun migrate(db: SupportSQLiteDatabase) {
+        migrateSql { sql -> db.execSQL(sql) }
+      }
+
+      override fun migrate(connection: SQLiteConnection) {
+        migrateSql { sql -> connection.execSQL(sql) }
+      }
+
+      private inline fun migrateSql(exec: (String) -> Unit) {
+        exec("ALTER TABLE `scheduled_tasks` ADD COLUMN `customWeekDaysJson` TEXT NOT NULL DEFAULT '[]'")
+        exec("ALTER TABLE `scheduled_tasks` ADD COLUMN `autoExecuteWhenReady` INTEGER NOT NULL DEFAULT 1")
+        exec("ALTER TABLE `scheduled_tasks` ADD COLUMN `lastFailureReason` TEXT NOT NULL DEFAULT ''")
       }
     }
   }

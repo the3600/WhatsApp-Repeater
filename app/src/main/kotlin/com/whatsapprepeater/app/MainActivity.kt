@@ -45,10 +45,16 @@ class MainActivity : ComponentActivity() {
   }
 
   private fun handleIncomingIntent(intent: Intent?, container: AppContainer) {
-    val taskId = intent?.getLongExtra(SchedulerAlarmHelper.EXTRA_LAUNCH_SCHEDULED_TASK_ID, -1L) ?: -1L
+    val safeIntent = intent ?: return
+    val openActive = safeIntent.getBooleanExtra(SchedulerAlarmHelper.EXTRA_LAUNCH_ACTIVE_AUTOMATION, false)
+    if (openActive) {
+      container.requestOpenActiveAutomation()
+      safeIntent.removeExtra(SchedulerAlarmHelper.EXTRA_LAUNCH_ACTIVE_AUTOMATION)
+    }
+    val taskId = safeIntent.getLongExtra(SchedulerAlarmHelper.EXTRA_LAUNCH_SCHEDULED_TASK_ID, -1L)
     if (taskId > 0L) {
       container.requestOpenScheduledTask(taskId)
-      intent?.removeExtra(SchedulerAlarmHelper.EXTRA_LAUNCH_SCHEDULED_TASK_ID)
+      safeIntent.removeExtra(SchedulerAlarmHelper.EXTRA_LAUNCH_SCHEDULED_TASK_ID)
     }
   }
 }

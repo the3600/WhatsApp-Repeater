@@ -28,9 +28,9 @@ import kotlinx.coroutines.withContext
 
 /**
  * Motor principal de automatización.
- * Ejecuta el flujo completo de forma transparente, verificando el destinatario antes de
- * escribir o enviar, validando razonablemente que cada mensaje se despache y deteniéndose
- * ante cualquier error, CAPTCHA o cambio inesperado de interfaz.
+ * Ejecuta el flujo completo de forma transparente: abre la conversación, verifica estrictamente
+ * al destinatario antes de escribir o pulsar Enviar, confirma el despacho real del mensaje y se
+ * detiene ante cualquier error, desconexión de accesibilidad, CAPTCHA o cambio inesperado de UI.
  */
 class AutomationEngine(
   private val driver: AccessibilityDriver,
@@ -63,6 +63,7 @@ class AutomationEngine(
           status = AutomationStatus.ERROR,
           contact = config.contact,
           errorCount = 1,
+          diagnosticStage = "Validación previa",
           statusDetail = "Destinatario inválido",
           errorMessage = "Selecciona un contacto o ingresa un número válido antes de iniciar.",
         )
@@ -70,51 +71,55 @@ class AutomationEngine(
       }
 
       if (!config.userConfirmed) {
-      _state.value = AutomationState(
-        status = AutomationStatus.ERROR,
-        contact = config.contact,
-        errorCount = 1,
-        statusDetail = "Confirmación requerida",
-        errorMessage = "El usuario debe confirmar explícitamente la operación antes de iniciar.",
-      )
-      return
-    }
+        _state.value = AutomationState(
+          status = AutomationStatus.ERROR,
+          contact = config.contact,
+          errorCount = 1,
+          diagnosticStage = "Confirmación del usuario",
+          statusDetail = "Confirmación requerida",
+          errorMessage = "El usuario debe confirmar explícitamente la operación antes de iniciar.",
+        )
+        return
+      }
 
-    val intervalError = config.intervalRange.validate()
-    if (intervalError != null) {
-      _state.value = AutomationState(
-        status = AutomationStatus.ERROR,
-        contact = config.contact,
-        errorCount = 1,
-        statusDetail = "Intervalo inválido",
-        errorMessage = intervalError,
-      )
-      return
-    }
+      val intervalError = config.intervalRange.validate()
+      if (intervalError != null) {
+        _state.value = AutomationState(
+          status = AutomationStatus.ERROR,
+          contact = config.contact,
+          errorCount = 1,
+          diagnosticStage = "Validación de intervalo",
+          statusDetail = "Intervalo inválido",
+          errorMessage = intervalError,
+        )
+        return
+      }
 
-    if (!driver.isServiceConnected.value) {
-      _state.value = AutomationState(
-        status = AutomationStatus.ERROR,
-        contact = config.contact,
-        errorCount = 1,
-        statusDetail = "Servicio de accesibilidad inactivo",
-        errorMessage = "Activa manualmente el servicio de accesibilidad de WhatsApp Repeater antes de iniciar.",
-      )
-      return
-    }
+      if (!driver.isServiceConnected.value) {
+        _state.value = AutomationState(
+          status = AutomationStatus.ERROR,
+          contact = config.contact,
+          errorCount = 1,
+          diagnosticStage = "Servicio de Accesibilidad",
+          statusDetail = "Servicio de accesibilidad inactivo",
+          errorMessage = "Activa manualmente el servicio de accesibilidad de WhatsApp Repeater antes de iniciar.",
+        )
+        return
+      }
 
-    val loadedMessages = try {
-      queueManager.load(config.mode)
-    } catch (e: IllegalArgumentException) {
-      _state.value = AutomationState(
-        status = AutomationStatus.ERROR,
-        contact = config.contact,
-        errorCount = 1,
-        statusDetail = "Configuración inválida",
-        errorMessage = e.message ?: "Revisa los mensajes configurados.",
-      )
-      return
-    }
+      val loadedMessages = try {
+        queueManager.load(config.mode)
+      } catch (e: IllegalArgumentException) {
+        _state.value = AutomationState(
+          status = AutomationStatus.ERROR,
+          contact = config.contact,
+          errorCount = 1,
+          diagnosticStage = "Cola de mensajes",
+          statusDetail = "Configuración inválida",
+          errorMessage = e.message ?: "Revisa los mensajes configurados.",
+        )
+        return
+      }
 
       val unresolvedTokens = loadedMessages
         .flatMap { DynamicVariablesEngine.findPlaceholders(it) }
@@ -125,6 +130,7 @@ class AutomationEngine(
           status = AutomationStatus.ERROR,
           contact = config.contact,
           errorCount = 1,
+          diagnosticStage = "Variables dinámicas",
           statusDetail = "Variables sin resolver",
           errorMessage = "Se detectaron variables sin resolver (${unresolvedTokens.joinToString(", ")}). Cancela y corrígelas antes de enviar.",
         )
@@ -147,6 +153,7 @@ class AutomationEngine(
         currentMessageIndex = 0,
         currentMessagePreview = loadedMessages.firstOrNull(),
         statusDetail = "Abriendo WhatsApp para ${config.contact.name}...",
+        diagnosticStage = "Apertura de conversación",
         batchId = batchId,
         activeIntervalRangeText = rangeText,
         startedAtMillis = now,
@@ -247,14 +254,13 @@ class AutomationEngine(
     }
 
     try {
-      ensureNotStopped()
-      // Paso 6-7: Abrir WhatsApp directamente hacia la conversación del contacto seleccionado.
+      ensureServiceAndNotStopped()
       val opened = driver.openWhatsAppChat(config.contact, config.targetPackage)
       if (!opened) {
         driver.openWhatsAppHome(config.targetPackage)
       }
       delayProvider(1_500L)
-      ensureNotStopped()
+      ensureServiceAndNotStopped()
 
       val reachedConversation = ensureConversationOpened(config)
       if (!reachedConversation) {
@@ -264,15 +270,14 @@ class AutomationEngine(
         return
       }
 
-      // Pasos 9-14: Iterar sobre la cola secuencial de mensajes.
       while (!queueManager.isFinished) {
-        ensureNotStopped()
+        ensureServiceAndNotStopped()
         waitWhilePaused()
 
         val message = queueManager.currentMessage() ?: break
         val currentIdx = queueManager.currentIndex + 1
 
-        // Paso 8: Reverificar que el destinatario sigue coincidiendo antes de cada envío.
+        // 1. Verificar que seguimos dentro de la conversación del contacto correcto.
         val openScreen = verifyActiveConversation(config)
         if (openScreen == null) {
           errorCount++
@@ -293,7 +298,10 @@ class AutomationEngine(
         if (inputNode == null) {
           errorCount++
           finalStatus = ExecutionFinalStatus.FAILED_ERROR
-          failWith("No se encontró el campo de escritura en WhatsApp.")
+          failWith(
+            message = "No se encontró el campo de escritura en WhatsApp. Verifica que la conversación esté abierta y sin bloqueos.",
+            stage = "Campo de escritura",
+          )
           finalDetail = "Campo de escritura no encontrado."
           traces.add(
             MessageExecutionTrace(
@@ -306,17 +314,29 @@ class AutomationEngine(
           return
         }
 
-        // Paso 9: Escribir mensaje.
+        // 2. Escribir mensaje en el campo de entrada (con 1 reintento seguro ante refresco de nodo).
         updateStatus(
           status = AutomationStatus.WRITING_MESSAGE,
           detail = "Escribiendo mensaje $currentIdx de ${queueManager.totalCount}...",
+          stage = "Inserción de mensaje",
           preview = message,
         )
-        val typed = driver.setText(inputNode.nodeId, message)
+        var typed = driver.setText(inputNode.nodeId, message)
+        if (!typed) {
+          delayProvider(250L)
+          val refreshed = verifyActiveConversation(config)
+          val freshInput = refreshed?.inputNode
+          if (freshInput != null) {
+            typed = driver.setText(freshInput.nodeId, message)
+          }
+        }
         if (!typed) {
           errorCount++
           finalStatus = ExecutionFinalStatus.FAILED_ERROR
-          failWith("No se pudo escribir el texto en el campo de mensaje.")
+          failWith(
+            message = "No se pudo escribir el texto en el campo de mensaje de WhatsApp.",
+            stage = "Inserción de mensaje",
+          )
           finalDetail = "Error al escribir el mensaje."
           traces.add(
             MessageExecutionTrace(
@@ -329,18 +349,22 @@ class AutomationEngine(
           return
         }
 
-        // Paso 10: Esperar confirmación visual de que el texto está escrito y el botón Enviar habilitado.
+        // 3. Esperar confirmación visual del texto y del botón Enviar habilitado.
         updateStatus(
           status = AutomationStatus.WAITING_SEND_CONFIRMATION,
           detail = "Verificando botón Enviar para mensaje $currentIdx/${queueManager.totalCount}...",
+          stage = "Botón Enviar",
           preview = message,
         )
-        val readyScreen = waitForSendButtonReady(config, message)
+        val readyOutcome = waitForSendButtonReady(config, message)
+        val readyScreen = readyOutcome.screen
         if (readyScreen?.sendButtonNode == null) {
           errorCount++
           finalStatus = ExecutionFinalStatus.FAILED_SAFETY_CHECK
-          failWith("No se confirmó el botón de envío habilitado con el texto listo.")
-          finalDetail = "Botón de envío no confirmado."
+          val reason = readyOutcome.failureReason
+            ?: "No se confirmó el botón Enviar habilitado con el texto listo en WhatsApp."
+          failWith(message = reason, stage = "Botón Enviar")
+          finalDetail = reason
           traces.add(
             MessageExecutionTrace(
               index = currentIdx,
@@ -353,19 +377,30 @@ class AutomationEngine(
         }
 
         waitWhilePaused()
-        ensureNotStopped()
+        ensureServiceAndNotStopped()
 
-        // Paso 11: Enviar mensaje y verificar razonablemente que la caja de texto se vació.
+        // 4. Pulsar Enviar y confirmar que el mensaje fue despachado (nunca marcar enviado sin verificar).
         updateStatus(
           status = AutomationStatus.SENDING_MESSAGE,
           detail = "Enviando mensaje $currentIdx de ${queueManager.totalCount}...",
+          stage = "Pulsación y despacho",
           preview = message,
         )
-        val clicked = driver.clickNode(readyScreen.sendButtonNode.nodeId)
+        var clicked = driver.clickNode(readyScreen.sendButtonNode.nodeId)
+        if (!clicked) {
+          delayProvider(200L)
+          val refreshedReady = waitForSendButtonReady(config, message).screen
+          if (refreshedReady?.sendButtonNode != null) {
+            clicked = driver.clickNode(refreshedReady.sendButtonNode.nodeId)
+          }
+        }
         if (!clicked) {
           errorCount++
           finalStatus = ExecutionFinalStatus.FAILED_ERROR
-          failWith("No se pudo pulsar el botón de envío de WhatsApp.")
+          failWith(
+            message = "No se pudo pulsar el botón Enviar de WhatsApp.",
+            stage = "Pulsación de Enviar",
+          )
           finalDetail = "Fallo al pulsar Enviar."
           traces.add(
             MessageExecutionTrace(
@@ -382,7 +417,10 @@ class AutomationEngine(
         if (!dispatched) {
           errorCount++
           finalStatus = ExecutionFinalStatus.FAILED_SAFETY_CHECK
-          failWith("Se pulsó Enviar pero no pudo verificarse que el mensaje saliera del campo de texto. Se detiene por seguridad.")
+          failWith(
+            message = "Se pulsó Enviar pero no pudo confirmarse que el mensaje saliera de la caja de texto en WhatsApp. Se detiene por seguridad sin registrarlo como enviado.",
+            stage = "Confirmación de despacho",
+          )
           finalDetail = "No se pudo verificar el despacho en la interfaz de WhatsApp."
           traces.add(
             MessageExecutionTrace(
@@ -414,23 +452,25 @@ class AutomationEngine(
           )
         }
 
-        // Paso 12-13: Esperar intervalo aleatorio si quedan mensajes pendientes.
+        // 5. Esperar intervalo aleatorio si quedan mensajes pendientes.
         if (!queueManager.isFinished) {
-          ensureNotStopped()
+          ensureServiceAndNotStopped()
           val waitSeconds = intervalGenerator.nextIntervalSeconds(config.intervalRange)
           intervalSamples.add(waitSeconds)
           waitIntervalWithCountdown(waitSeconds)
         }
       }
 
-      // Paso 14: Finalizar con éxito.
+      // 6. Finalización exitosa confirmada.
       val completedAt = clockMillis()
       _state.update {
         it.copy(
           status = AutomationStatus.COMPLETED,
           remainingIntervalSeconds = 0,
           statusDetail = "Completado: ${queueManager.sentCount} de ${queueManager.totalCount} mensajes confirmados.",
+          diagnosticStage = "Completado",
           errorMessage = null,
+          observedHeaderSummary = "",
           finishedAtMillis = completedAt,
         )
       }
@@ -444,17 +484,22 @@ class AutomationEngine(
           status = AutomationStatus.STOPPED,
           remainingIntervalSeconds = 0,
           statusDetail = "Detenido manualmente por el usuario.",
+          diagnosticStage = "Detención manual",
           finishedAtMillis = clockMillis(),
         )
       }
       throw c
+    } catch (s: ServiceDisconnectedException) {
+      errorCount++
+      finalStatus = ExecutionFinalStatus.FAILED_ERROR
+      finalDetail = s.message ?: "El servicio de accesibilidad fue detenido por Android o HyperOS."
+      failWith(message = finalDetail, stage = "Servicio de Accesibilidad")
     } catch (e: Exception) {
       errorCount++
       finalStatus = ExecutionFinalStatus.FAILED_ERROR
       finalDetail = e.message ?: "Error inesperado durante la automatización."
-      failWith(finalDetail)
+      failWith(message = finalDetail, stage = "Error de ejecución")
     } finally {
-      // Marcar los mensajes restantes en cola como CANCELLED si hubo interrupción/error.
       val recordedIndices = traces.map { it.index }.toSet()
       val nowEnd = clockMillis()
       for (i in allMessages.indices) {
@@ -510,8 +555,13 @@ class AutomationEngine(
     config: AutomationConfig,
     sentText: String,
   ): Boolean {
-    repeat(4) {
-      delayProvider(400L)
+    repeat(8) {
+      delayProvider(350L)
+      if (!driver.isServiceConnected.value) {
+        throw ServiceDisconnectedException(
+          "El servicio de Accesibilidad de WhatsApp Repeater fue desconectado por Android o HyperOS durante el despacho.",
+        )
+      }
       val screen = navigator.inspectScreen(driver.captureScreenSnapshot())
       if (screen is WhatsAppScreen.UnexpectedOrError &&
         (screen.isSecurityOrCaptcha || screen.reason.contains("WhatsApp mostró"))
@@ -519,11 +569,12 @@ class AutomationEngine(
         return false
       }
       if (screen is WhatsAppScreen.OpenConversation) {
-        if (verifyRecipientAndUpdate(screen, config.contact) == null) {
+        if (verifyRecipientAndUpdate(screen, config.contact, updateFailState = false) == null) {
           return false
         }
-        val stillHasText = navigator.isMessageReadyInInput(screen.inputNode, sentText)
-        if (!stillHasText) {
+        val cleared = navigator.isComposerClearedAfterSend(screen.inputNode, sentText)
+        val resetToMicOrNoSend = screen.sendButtonNode == null || screen.micButtonPresent
+        if (cleared && resetToMicOrNoSend) {
           return true
         }
       }
@@ -535,16 +586,17 @@ class AutomationEngine(
     updateStatus(
       status = AutomationStatus.NAVIGATING_TO_CHAT,
       detail = "Buscando conversación de ${config.contact.name}...",
+      stage = "Apertura de conversación",
     )
 
     var searchAttempted = false
-    repeat(14) {
-      ensureNotStopped()
+    repeat(16) {
+      ensureServiceAndNotStopped()
       waitWhilePaused()
       val screen = navigator.inspectScreen(driver.captureScreenSnapshot())
       when (screen) {
         is WhatsAppScreen.OpenConversation -> {
-          return verifyRecipientAndUpdate(screen, config.contact) != null
+          return verifyRecipientAndUpdate(screen, config.contact, updateFailState = true) != null
         }
 
         is WhatsAppScreen.HomeChatList -> {
@@ -569,11 +621,17 @@ class AutomationEngine(
 
         is WhatsAppScreen.UnexpectedOrError -> {
           if (screen.isSecurityOrCaptcha) {
-            failWith("${screen.reason} La automatización se detiene por seguridad.")
+            failWith(
+              message = "${screen.reason} La automatización se detiene por seguridad.",
+              stage = "Bloqueo / Seguridad WhatsApp",
+            )
             return false
           }
           if (screen.reason.contains("WhatsApp mostró")) {
-            failWith(screen.reason)
+            failWith(
+              message = screen.reason,
+              stage = "Diálogo de WhatsApp",
+            )
             return false
           }
         }
@@ -585,7 +643,10 @@ class AutomationEngine(
       delayProvider(700L)
     }
 
-    failWith("No se pudo abrir la conversación de ${config.contact.name} dentro del tiempo límite.")
+    failWith(
+      message = "No se pudo abrir ni confirmar la conversación de ${config.contact.name} (${config.contact.phoneNumber}) dentro del tiempo límite.",
+      stage = "Apertura de conversación",
+    )
     return false
   }
 
@@ -593,21 +654,28 @@ class AutomationEngine(
     updateStatus(
       status = AutomationStatus.VERIFYING_RECIPIENT,
       detail = "Verificando destinatario en pantalla...",
+      stage = "Verificación de destinatario",
     )
 
     val screen = navigator.inspectScreen(driver.captureScreenSnapshot())
     return when (screen) {
-      is WhatsAppScreen.OpenConversation -> verifyRecipientAndUpdate(screen, config.contact)
+      is WhatsAppScreen.OpenConversation -> verifyRecipientAndUpdate(screen, config.contact, updateFailState = true)
       is WhatsAppScreen.UnexpectedOrError -> {
-        failWith(screen.reason)
+        failWith(message = screen.reason, stage = "Pantalla de WhatsApp")
         null
       }
       is WhatsAppScreen.ExternalApp -> {
-        failWith("Se abandonó WhatsApp (${screen.packageName ?: "pantalla externa"}). Ejecución detenida.")
+        failWith(
+          message = "Se abandonó WhatsApp (${screen.packageName ?: "pantalla externa"}). Ejecución detenida por seguridad.",
+          stage = "Cambio de pantalla",
+        )
         null
       }
       else -> {
-        failWith("La conversación ya no está abierta en primer plano. Ejecución detenida.")
+        failWith(
+          message = "La conversación ya no está abierta en primer plano. Ejecución detenida.",
+          stage = "Conversación cerrada",
+        )
         null
       }
     }
@@ -616,69 +684,95 @@ class AutomationEngine(
   private fun verifyRecipientAndUpdate(
     screen: WhatsAppScreen.OpenConversation,
     contact: ContactInfo,
+    updateFailState: Boolean,
   ): WhatsAppScreen.OpenConversation? {
     return when (val result = navigator.verifyRecipientMatches(screen, contact)) {
       is RecipientVerificationResult.Verified -> screen
       is RecipientVerificationResult.Mismatch -> {
-        failWith(result.reason)
+        if (updateFailState) {
+          failWith(
+            message = result.reason,
+            stage = "Verificación de destinatario",
+            observedHeader = result.observedHeaders.joinToString(" | "),
+          )
+        }
         null
       }
     }
   }
 
+  private data class SendButtonReadyOutcome(
+    val screen: WhatsAppScreen.OpenConversation? = null,
+    val failureReason: String? = null,
+  )
+
   private suspend fun waitForSendButtonReady(
     config: AutomationConfig,
     expectedText: String,
-  ): WhatsAppScreen.OpenConversation? {
-    repeat(6) {
-      ensureNotStopped()
+  ): SendButtonReadyOutcome {
+    var lastTextReady = false
+    var lastMicPresent = false
+    repeat(8) {
+      ensureServiceAndNotStopped()
       waitWhilePaused()
       val screen = navigator.inspectScreen(driver.captureScreenSnapshot())
       if (screen is WhatsAppScreen.UnexpectedOrError &&
         (screen.isSecurityOrCaptcha || screen.reason.contains("WhatsApp mostró"))
       ) {
-        failWith(screen.reason)
-        return null
+        return SendButtonReadyOutcome(failureReason = screen.reason)
       }
       if (screen is WhatsAppScreen.OpenConversation) {
-        val verified = verifyRecipientAndUpdate(screen, config.contact) ?: return null
-        val textReady = navigator.isMessageReadyInInput(verified.inputNode, expectedText)
-        if (textReady && verified.sendButtonNode != null && verified.sendButtonNode.isEnabled) {
-          return verified
+        val verified = verifyRecipientAndUpdate(screen, config.contact, updateFailState = true)
+          ?: return SendButtonReadyOutcome(failureReason = _state.value.errorMessage)
+        lastTextReady = navigator.isMessageReadyInInput(verified.inputNode, expectedText)
+        lastMicPresent = verified.micButtonPresent
+        if (lastTextReady && verified.sendButtonNode != null && verified.sendButtonNode.isEnabled) {
+          return SendButtonReadyOutcome(screen = verified)
         }
       }
-      delayProvider(400L)
+      delayProvider(350L)
     }
-    return null
+    val diagnosis = when {
+      !lastTextReady -> "El mensaje escrito no permaneció confirmado dentro del campo de texto."
+      lastMicPresent -> "El texto está en la caja pero WhatsApp siguió mostrando el botón de nota de voz en lugar de Enviar."
+      else -> "No se confirmó el botón Enviar habilitado dentro de WhatsApp."
+    }
+    return SendButtonReadyOutcome(failureReason = diagnosis)
   }
 
   private suspend fun waitIntervalWithCountdown(totalSeconds: Int) {
     for (remaining in totalSeconds downTo 1) {
-      ensureNotStopped()
+      ensureServiceAndNotStopped()
       waitWhilePaused()
       _state.update {
         it.copy(
           status = AutomationStatus.WAITING_INTERVAL,
           remainingIntervalSeconds = remaining,
+          diagnosticStage = "Intervalo entre mensajes",
           statusDetail = "Esperando intervalo aleatorio: ${remaining}s restantes...",
         )
       }
       delayProvider(1_000L)
-      ensureNotStopped()
+      ensureServiceAndNotStopped()
     }
     _state.update { it.copy(remainingIntervalSeconds = 0) }
   }
 
   private suspend fun waitWhilePaused() {
     while (pauseRequested.value) {
-      ensureNotStopped()
+      ensureServiceAndNotStopped()
       delayProvider(250L)
     }
   }
 
-  private suspend fun ensureNotStopped() {
+  private suspend fun ensureServiceAndNotStopped() {
     if (stopRequested) {
       throw CancellationException("Detención de emergencia activada por el usuario")
+    }
+    if (!driver.isServiceConnected.value) {
+      throw ServiceDisconnectedException(
+        "El servicio de Accesibilidad de WhatsApp Repeater fue desconectado por Android o HyperOS durante la operación.",
+      )
     }
     currentCoroutineContext().ensureActive()
   }
@@ -686,27 +780,37 @@ class AutomationEngine(
   private fun updateStatus(
     status: AutomationStatus,
     detail: String,
+    stage: String = _state.value.diagnosticStage,
     preview: String? = _state.value.currentMessagePreview,
   ) {
     _state.update {
       it.copy(
         status = status,
         statusDetail = detail,
+        diagnosticStage = stage,
         currentMessagePreview = preview,
       )
     }
   }
 
-  private fun failWith(message: String) {
+  private fun failWith(
+    message: String,
+    stage: String = "Seguridad / Error",
+    observedHeader: String = "",
+  ) {
     _state.update {
       it.copy(
         status = AutomationStatus.ERROR,
         errorCount = it.errorCount + 1,
         remainingIntervalSeconds = 0,
-        statusDetail = "Detenido por seguridad / error",
+        statusDetail = "Detenido en: $stage",
+        diagnosticStage = stage,
         errorMessage = message,
+        observedHeaderSummary = observedHeader,
         finishedAtMillis = clockMillis(),
       )
     }
   }
+
+  private class ServiceDisconnectedException(message: String) : Exception(message)
 }

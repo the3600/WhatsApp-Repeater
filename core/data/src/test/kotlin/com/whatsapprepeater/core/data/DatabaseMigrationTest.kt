@@ -92,6 +92,16 @@ class DatabaseMigrationTest {
         )
 
         AppDatabase.MIGRATION_4_5.migrate(proxyDb)
+
+        stmt.execute(
+          """
+          INSERT INTO `scheduled_tasks`
+          (`title`, `contactId`, `contactName`, `contactPhone`, `isMultipleMode`, `messagesJson`, `singleMessage`, `repeatCount`, `minIntervalSeconds`, `maxIntervalSeconds`, `preferWhatsAppBusiness`, `triggerAtMillis`, `recurrence`, `expirationMillis`, `enabled`, `notifyBeforeMinutes`, `status`, `lastExecutedAtMillis`, `lastPunctualityDeltaSeconds`, `createdAtMillis`, `updatedAtMillis`)
+          VALUES ('Recordatorio', '1', 'Laura', '+573001112222', 0, '[]', 'Hola', 1, 15, 30, 0, 1700010000000, 'DAILY', NULL, 1, 5, 'PENDING', 0, 0, 1700000000000, 1700000000000)
+          """.trimIndent(),
+        )
+
+        AppDatabase.MIGRATION_5_6.migrate(proxyDb)
         stmt.execute("PRAGMA user_version = ${AppDatabase.CURRENT_VERSION}")
 
         stmt.executeQuery("SELECT contactName, confirmedCount, batchCode, messageTracesJson FROM execution_history").use { rs ->
@@ -123,17 +133,13 @@ class DatabaseMigrationTest {
           assertEquals(0, rs.getInt(4))
         }
 
-        stmt.execute(
-          """
-          INSERT INTO `scheduled_tasks`
-          (`title`, `contactId`, `contactName`, `contactPhone`, `isMultipleMode`, `messagesJson`, `singleMessage`, `repeatCount`, `minIntervalSeconds`, `maxIntervalSeconds`, `preferWhatsAppBusiness`, `triggerAtMillis`, `recurrence`, `expirationMillis`, `enabled`, `notifyBeforeMinutes`, `status`, `lastExecutedAtMillis`, `lastPunctualityDeltaSeconds`, `createdAtMillis`, `updatedAtMillis`)
-          VALUES ('Recordatorio', '1', 'Laura', '+573001112222', 0, '[]', 'Hola', 1, 15, 30, 0, 1700010000000, 'DAILY', NULL, 1, 5, 'PENDING', 0, 0, 1700000000000, 1700000000000)
-          """.trimIndent(),
-        )
-        stmt.executeQuery("SELECT title, recurrence FROM scheduled_tasks").use { rs ->
+        stmt.executeQuery("SELECT title, recurrence, customWeekDaysJson, autoExecuteWhenReady, lastFailureReason FROM scheduled_tasks").use { rs ->
           assertTrue(rs.next())
           assertEquals("Recordatorio", rs.getString(1))
           assertEquals("DAILY", rs.getString(2))
+          assertEquals("[]", rs.getString(3))
+          assertEquals(1, rs.getInt(4))
+          assertEquals("", rs.getString(5))
         }
       }
     }
@@ -310,7 +316,9 @@ class DatabaseMigrationTest {
       maxIntervalSeconds = 30,
       preferWhatsAppBusiness = true,
       triggerAtMillis = 1_800_000_000_000L,
-      recurrence = SchedulerRecurrence.WEEKLY,
+      recurrence = SchedulerRecurrence.CUSTOM_DAYS,
+      customWeekDays = listOf(1, 3, 5),
+      autoExecuteWhenReady = true,
     )
 
     val encrypted = LocalBackupManager.exportEncryptedJson(
@@ -328,6 +336,8 @@ class DatabaseMigrationTest {
     assertEquals(true, decoded.savedLists.first().isFavorite)
     val tasks = LocalBackupManager.toScheduledTasks(decoded.scheduledTasks)
     assertEquals(1, tasks.size)
-    assertEquals(SchedulerRecurrence.WEEKLY, tasks.first().recurrence)
+    assertEquals(SchedulerRecurrence.CUSTOM_DAYS, tasks.first().recurrence)
+    assertEquals(listOf(1, 3, 5), tasks.first().customWeekDays)
+    assertEquals(true, tasks.first().autoExecuteWhenReady)
   }
 }

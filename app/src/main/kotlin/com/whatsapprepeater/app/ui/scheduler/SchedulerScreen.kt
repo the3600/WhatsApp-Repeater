@@ -1,13 +1,10 @@
 package com.whatsapprepeater.app.ui.scheduler
 
-import android.app.DatePickerDialog
-import android.app.TimePickerDialog
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -15,7 +12,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -26,41 +22,43 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.AccessibilityNew
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.AlarmOn
 import androidx.compose.material.icons.rounded.BeachAccess
-import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.EventAvailable
+import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.whatsapprepeater.app.ui.components.EmptyStateCard
 import com.whatsapprepeater.app.ui.components.LargePrimaryButton
@@ -78,14 +76,22 @@ import com.whatsapprepeater.app.ui.theme.WarningAmber
 import com.whatsapprepeater.app.ui.theme.WarningContainer
 import com.whatsapprepeater.app.ui.theme.WhatsAppGreen
 import com.whatsapprepeater.app.ui.theme.WhatsAppGreenContainer
-import com.whatsapprepeater.core.model.SavedMessageList
 import com.whatsapprepeater.core.model.ScheduledTask
 import com.whatsapprepeater.core.model.ScheduledTaskStatus
 import com.whatsapprepeater.core.model.SchedulerRecurrence
 import java.text.SimpleDateFormat
-import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+
+private val weekDayShortLabels = mapOf(
+  1 to "Lun",
+  2 to "Mar",
+  3 to "Mié",
+  4 to "Jue",
+  5 to "Vie",
+  6 to "Sáb",
+  7 to "Dom",
+)
 
 @Composable
 fun SchedulerScreen(
@@ -93,14 +99,28 @@ fun SchedulerScreen(
   onBack: () -> Unit,
   onOpenWizardToPrepareDraft: () -> Unit,
   onExecutePreparedTask: () -> Unit,
+  onOpenPermissions: () -> Unit = {},
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
-  var showCreateDialog by remember { mutableStateOf(false) }
+  val lifecycleOwner = LocalLifecycleOwner.current
+  var showEditorForTask by remember { mutableStateOf<Pair<Boolean, ScheduledTask?>>(false to null) }
+  var taskPendingDelete by remember { mutableStateOf<ScheduledTask?>(null) }
+
+  DisposableEffect(lifecycleOwner) {
+    val observer = LifecycleEventObserver { _, event ->
+      if (event == Lifecycle.Event.ON_RESUME) {
+        viewModel.refreshEnvironment()
+      }
+    }
+    lifecycleOwner.lifecycle.addObserver(observer)
+    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+  }
 
   val visibleTasks = when (state.selectedTab) {
     SchedulerTab.UPCOMING -> state.upcomingTasks
-    SchedulerTab.HISTORY -> state.punctualityHistory
-    SchedulerTab.ATTENTION -> state.attentionTasks
+    SchedulerTab.PAUSED -> state.pausedTasks
+    SchedulerTab.FINISHED -> state.finishedOrFailedTasks
+    SchedulerTab.ALL -> state.tasks.sortedBy { it.triggerAtMillis }
   }
 
   Column(
@@ -128,7 +148,7 @@ fun SchedulerScreen(
       Spacer(modifier = Modifier.width(12.dp))
       Column {
         Text("Programador Local", style = MaterialTheme.typography.titleLarge, color = TextPrimary)
-        Text("Calendario, recurrencias, vacaciones y puntualidad", style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+        Text("Calendario visual, reloj y envío programado real", style = MaterialTheme.typography.bodySmall, color = TextSecondary)
       }
     }
 
@@ -137,6 +157,18 @@ fun SchedulerScreen(
       contentPadding = PaddingValues(16.dp),
       verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+      // Botón principal SIEMPRE visible para crear programación completa desde aquí
+      item {
+        LargePrimaryButton(
+          text = "Nueva programación",
+          icon = Icons.Rounded.Add,
+          onClick = {
+            viewModel.clearFeedback()
+            showEditorForTask = true to null
+          },
+        )
+      }
+
       if (!state.feedback.isNullOrBlank()) {
         item {
           SectionCard(
@@ -148,7 +180,75 @@ fun SchedulerScreen(
         }
       }
 
-      // Modo vacaciones (pausa global de programaciones)
+      // Panel honesto de requisitos del sistema (Accesibilidad, Alarmas exactas, HyperOS / desbloqueo)
+      item {
+        SectionCard(
+          borderColor = if (state.isAccessibilityConnected && state.canScheduleExactAlarms) OutlineSubtle else WarningAmber,
+        ) {
+          Text("Requisitos del envío automático", style = MaterialTheme.typography.titleSmall, color = TextPrimary)
+          Spacer(modifier = Modifier.height(6.dp))
+          Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+          ) {
+            Surface(
+              shape = RoundedCornerShape(999.dp),
+              color = if (state.isAccessibilityConnected) WhatsAppGreenContainer else WarningContainer,
+              modifier = Modifier
+                .clip(RoundedCornerShape(999.dp))
+                .clickable(onClick = onOpenPermissions),
+            ) {
+              Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+                Icon(
+                  Icons.Rounded.AccessibilityNew,
+                  contentDescription = null,
+                  tint = if (state.isAccessibilityConnected) WhatsAppGreen else WarningAmber,
+                  modifier = Modifier.size(14.dp),
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                  text = if (state.isAccessibilityConnected) "Accesibilidad activa" else "Activar Accesibilidad",
+                  style = MaterialTheme.typography.labelSmall,
+                  color = if (state.isAccessibilityConnected) WhatsAppGreen else WarningAmber,
+                  fontWeight = FontWeight.Bold,
+                )
+              }
+            }
+
+            Surface(
+              shape = RoundedCornerShape(999.dp),
+              color = if (state.canScheduleExactAlarms) WhatsAppGreenContainer else WarningContainer,
+              modifier = Modifier
+                .clip(RoundedCornerShape(999.dp))
+                .clickable(onClick = { viewModel.openExactAlarmSettings() }),
+            ) {
+              Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+                Icon(
+                  Icons.Rounded.AlarmOn,
+                  contentDescription = null,
+                  tint = if (state.canScheduleExactAlarms) WhatsAppGreen else WarningAmber,
+                  modifier = Modifier.size(14.dp),
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                  text = if (state.canScheduleExactAlarms) "Alarma exacta OK" else "Permitir alarma exacta",
+                  style = MaterialTheme.typography.labelSmall,
+                  color = if (state.canScheduleExactAlarms) WhatsAppGreen else WarningAmber,
+                  fontWeight = FontWeight.Bold,
+                )
+              }
+            }
+          }
+          Spacer(modifier = Modifier.height(6.dp))
+          Text(
+            text = "WhatsApp requiere pantalla encendida y desbloqueada para enviar mensajes. Si el teléfono está bloqueado o HyperOS suspende la app en segundo plano, no se simulará un envío: recibirás un aviso de Intervención requerida.",
+            style = MaterialTheme.typography.bodySmall,
+            color = TextSecondary,
+          )
+        }
+      }
+
+      // Modo vacaciones global
       item {
         SectionCard(
           borderColor = if (state.vacationPauseEnabled) WarningAmber else OutlineSubtle,
@@ -169,9 +269,9 @@ fun SchedulerScreen(
                 Text("Pausa por vacaciones", style = MaterialTheme.typography.titleSmall, color = TextPrimary)
                 Text(
                   text = if (state.vacationPauseEnabled) {
-                    "Activa: los recordatorios pendientes se omiten temporalmente"
+                    "Activa: ninguna programación ejecutará envíos hasta desactivarla"
                   } else {
-                    "Desactivada: tus programaciones notificarán puntualmente"
+                    "Desactivada: las programaciones activas siguen su horario"
                   },
                   style = MaterialTheme.typography.bodySmall,
                   color = TextSecondary,
@@ -187,34 +287,7 @@ fun SchedulerScreen(
         }
       }
 
-      // Botón principal de creación desde el borrador activo
-      item {
-        if (state.canScheduleCurrentDraft) {
-          LargePrimaryButton(
-            text = "Programar borrador actual (${state.activeDraft.selectedContact?.name ?: ""})",
-            icon = Icons.Rounded.Add,
-            onClick = { showCreateDialog = true },
-          )
-        } else {
-          SectionCard {
-            Text("¿Quieres programar un nuevo envío?", style = MaterialTheme.typography.titleSmall, color = TextPrimary)
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-              text = "Configura primero un contacto y mensaje en el asistente o selecciona una programación existente para duplicarla.",
-              style = MaterialTheme.typography.bodySmall,
-              color = TextSecondary,
-            )
-            Spacer(modifier = Modifier.height(10.dp))
-            LargePrimaryButton(
-              text = "Configurar mensaje ahora",
-              icon = Icons.Rounded.Schedule,
-              onClick = onOpenWizardToPrepareDraft,
-            )
-          }
-        }
-      }
-
-      // Pestañas Agenda / Puntualidad / Vencidas
+      // Pestañas
       item {
         Row(
           horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -226,8 +299,9 @@ fun SchedulerScreen(
             val selected = state.selectedTab == tab
             val badgeCount = when (tab) {
               SchedulerTab.UPCOMING -> state.upcomingTasks.size
-              SchedulerTab.HISTORY -> state.punctualityHistory.size
-              SchedulerTab.ATTENTION -> state.attentionTasks.size
+              SchedulerTab.PAUSED -> state.pausedTasks.size
+              SchedulerTab.FINISHED -> state.finishedOrFailedTasks.size
+              SchedulerTab.ALL -> state.tasks.size
             }
             Surface(
               shape = RoundedCornerShape(999.dp),
@@ -252,13 +326,13 @@ fun SchedulerScreen(
         item {
           EmptyStateCard(
             icon = Icons.Rounded.EventAvailable,
-            title = "Sin tareas en esta vista",
-            description = "Las programaciones locales emiten un recordatorio puntual en 1 toque respetando restricciones de Android e HyperOS.",
+            title = "Sin programaciones en esta vista",
+            description = "Pulsa «Nueva programación» arriba para elegir contacto, mensaje único o secuencia, fecha con calendario visual y hora exacta.",
           )
         }
       } else if (state.selectedTab == SchedulerTab.UPCOMING) {
         val groupedByDay = visibleTasks.groupBy { task ->
-          SimpleDateFormat("EEEE, dd MMM", Locale.forLanguageTag("es")).format(Date(task.triggerAtMillis))
+          SimpleDateFormat("EEEE, dd MMM yyyy", Locale.forLanguageTag("es")).format(Date(task.triggerAtMillis))
         }
         groupedByDay.forEach { (dayLabel, dayTasks) ->
           item(key = "day_header_$dayLabel") {
@@ -273,9 +347,10 @@ fun SchedulerScreen(
           items(dayTasks, key = { "upcoming_${it.id}" }) { task ->
             ScheduledTaskCard(
               task = task,
-              onToggleEnabled = { viewModel.toggleTaskEnabled(task) },
-              onDuplicate = { viewModel.duplicateSchedule(task) },
-              onDelete = { viewModel.deleteTask(task.id) },
+              onEdit = { showEditorForTask = true to task },
+              onPause = { viewModel.pauseTask(task) },
+              onResume = { viewModel.resumeTask(task) },
+              onDelete = { taskPendingDelete = task },
               onExecuteNow = {
                 viewModel.prepareExecutionNow(task)
                 onExecutePreparedTask()
@@ -284,12 +359,13 @@ fun SchedulerScreen(
           }
         }
       } else {
-        items(visibleTasks, key = { it.id }) { task ->
+        items(visibleTasks, key = { "${state.selectedTab.name}_${it.id}" }) { task ->
           ScheduledTaskCard(
             task = task,
-            onToggleEnabled = { viewModel.toggleTaskEnabled(task) },
-            onDuplicate = { viewModel.duplicateSchedule(task) },
-            onDelete = { viewModel.deleteTask(task.id) },
+            onEdit = { showEditorForTask = true to task },
+            onPause = { viewModel.pauseTask(task) },
+            onResume = { viewModel.resumeTask(task) },
+            onDelete = { taskPendingDelete = task },
             onExecuteNow = {
               viewModel.prepareExecutionNow(task)
               onExecutePreparedTask()
@@ -300,14 +376,87 @@ fun SchedulerScreen(
     }
   }
 
-  if (showCreateDialog) {
-    CreateScheduleDialog(
-      defaultTitle = "Recordatorio ${state.activeDraft.selectedContact?.name ?: ""}",
+  if (showEditorForTask.first) {
+    ScheduleFullEditorDialog(
+      initialTask = showEditorForTask.second,
+      activeDraft = state.activeDraft,
       savedTemplates = state.savedTemplates,
-      onDismiss = { showCreateDialog = false },
-      onCreate = { title, triggerAt, recurrence, expiration, notifyMins, template ->
-        viewModel.createFromCurrentDraft(title, triggerAt, recurrence, expiration, notifyMins, template)
-        showCreateDialog = false
+      phoneContacts = state.phoneContacts,
+      hasContactsPermission = state.hasContactsPermission,
+      onDismiss = { showEditorForTask = false to null },
+      onSave = { editorInput ->
+        viewModel.saveSchedule(editorInput) {
+          showEditorForTask = false to null
+        }
+      },
+    )
+  }
+
+  val confirmedSaved = state.savedConfirmationTask
+  if (confirmedSaved != null) {
+    val savedDate = remember(confirmedSaved.triggerAtMillis) {
+      SimpleDateFormat("EEEE dd/MM/yyyy 'a las' HH:mm", Locale.forLanguageTag("es")).format(Date(confirmedSaved.triggerAtMillis))
+    }
+    AlertDialog(
+      onDismissRequest = viewModel::dismissSavedConfirmation,
+      containerColor = CardSurface,
+      titleContentColor = TextPrimary,
+      textContentColor = TextSecondary,
+      title = {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = WhatsAppGreen)
+          Spacer(modifier = Modifier.width(8.dp))
+          Text("Programación guardada", fontWeight = FontWeight.Bold)
+        }
+      },
+      text = {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+          Text(
+            text = "\"${confirmedSaved.title}\" para ${confirmedSaved.contactName} quedó programada para el $savedDate.",
+            color = TextPrimary,
+          )
+          Text(
+            text = if (confirmedSaved.autoExecuteWhenReady) {
+              "Intentará ejecutar el envío real automáticamente al llegar la hora si la accesibilidad está activa y la pantalla desbloqueada."
+            } else {
+              "Recibirás un aviso puntual con botón para revisarlo e iniciarlo."
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = TextSecondary,
+          )
+        }
+      },
+      confirmButton = {
+        TextButton(onClick = viewModel::dismissSavedConfirmation) {
+          Text("Entendido", color = WhatsAppGreen, fontWeight = FontWeight.Bold)
+        }
+      },
+    )
+  }
+
+  val pendingDel = taskPendingDelete
+  if (pendingDel != null) {
+    AlertDialog(
+      onDismissRequest = { taskPendingDelete = null },
+      containerColor = CardSurface,
+      titleContentColor = TextPrimary,
+      textContentColor = TextSecondary,
+      title = { Text("Eliminar programación") },
+      text = { Text("¿Eliminar \"${pendingDel.title}\" y cancelar sus alarmas locales?") },
+      confirmButton = {
+        TextButton(
+          onClick = {
+            viewModel.deleteTask(pendingDel.id)
+            taskPendingDelete = null
+          },
+        ) {
+          Text("Eliminar", color = DangerRed, fontWeight = FontWeight.Bold)
+        }
+      },
+      dismissButton = {
+        TextButton(onClick = { taskPendingDelete = null }) {
+          Text("Cancelar", color = TextSecondary)
+        }
       },
     )
   }
@@ -316,20 +465,36 @@ fun SchedulerScreen(
 @Composable
 private fun ScheduledTaskCard(
   task: ScheduledTask,
-  onToggleEnabled: () -> Unit,
-  onDuplicate: () -> Unit,
+  onEdit: () -> Unit,
+  onPause: () -> Unit,
+  onResume: () -> Unit,
   onDelete: () -> Unit,
   onExecuteNow: () -> Unit,
 ) {
   val dateStr = remember(task.triggerAtMillis) {
-    SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date(task.triggerAtMillis))
+    SimpleDateFormat("dd/MM/yyyy • HH:mm", Locale.getDefault()).format(Date(task.triggerAtMillis))
+  }
+  val endStr = remember(task.expirationMillis) {
+    task.expirationMillis?.let {
+      SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date(it))
+    }
   }
   val (statusBg, statusFg) = when (task.status) {
     ScheduledTaskStatus.COMPLETED -> WhatsAppGreenContainer to WhatsAppGreen
+    ScheduledTaskStatus.ACTIVE -> WhatsAppGreenContainer to WhatsAppGreen
     ScheduledTaskStatus.FAILED, ScheduledTaskStatus.EXPIRED -> DangerContainer to DangerRed
-    ScheduledTaskStatus.SKIPPED_VACATION, ScheduledTaskStatus.NOTIFIED -> WarningContainer to WarningAmber
+    ScheduledTaskStatus.PAUSED, ScheduledTaskStatus.SKIPPED_VACATION, ScheduledTaskStatus.NOTIFIED ->
+      WarningContainer to WarningAmber
     ScheduledTaskStatus.PENDING -> CardSurfaceElevated to WhatsAppGreen
   }
+  val recurrenceText = if (task.recurrence == SchedulerRecurrence.CUSTOM_DAYS && task.customWeekDays.isNotEmpty()) {
+    task.customWeekDays.sorted().mapNotNull { weekDayShortLabels[it] }.joinToString(", ")
+  } else {
+    task.recurrence.label
+  }
+  val isPauseable = task.enabled &&
+    task.status != ScheduledTaskStatus.PAUSED &&
+    task.status != ScheduledTaskStatus.COMPLETED
 
   SectionCard {
     Row(
@@ -339,26 +504,29 @@ private fun ScheduledTaskCard(
     ) {
       Column(modifier = Modifier.weight(1f)) {
         Text(task.title, style = MaterialTheme.typography.titleMedium, color = TextPrimary, fontWeight = FontWeight.Bold)
-        Text("${task.contactName} • $dateStr", style = MaterialTheme.typography.bodySmall, color = WhatsAppGreen)
+        Text("${task.contactName} (${task.contactPhone})", style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+        Text("Inicio / próximo: $dateStr", style = MaterialTheme.typography.bodySmall, color = WhatsAppGreen, fontWeight = FontWeight.SemiBold)
+        if (endStr != null) {
+          Text("Finalización: $endStr", style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+        }
       }
-      Switch(
-        checked = task.enabled,
-        onCheckedChange = { onToggleEnabled() },
-        colors = SwitchDefaults.colors(checkedThumbColor = BackgroundBlack, checkedTrackColor = WhatsAppGreen),
-      )
+      StatusBadge(task.status.label, statusBg, statusFg)
     }
 
-    Spacer(modifier = Modifier.height(6.dp))
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-      StatusBadge(task.status.label, statusBg, statusFg)
-      StatusBadge(task.recurrence.label, CardSurfaceElevated, TextSecondary)
-      if (task.lastExecutedAtMillis > 0L) {
-        val punctuality = if (task.lastPunctualityDeltaSeconds <= 60L) {
-          "Puntual (${task.lastPunctualityDeltaSeconds}s)"
-        } else {
-          "+${task.lastPunctualityDeltaSeconds / 60L}m retardo"
-        }
-        StatusBadge(punctuality, CardSurfaceElevated, WhatsAppGreen)
+    Spacer(modifier = Modifier.height(8.dp))
+    Row(
+      horizontalArrangement = Arrangement.spacedBy(6.dp),
+      modifier = Modifier.horizontalScroll(rememberScrollState()),
+    ) {
+      StatusBadge(recurrenceText, CardSurfaceElevated, TextSecondary)
+      val modeBadge = if (task.isMultipleMode) {
+        "Secuencia (${task.totalMessagesCount}) • ${task.minIntervalSeconds}-${task.maxIntervalSeconds}s"
+      } else {
+        "Único (${task.repeatCount}x)" + if (task.repeatCount > 1) " • ${task.minIntervalSeconds}-${task.maxIntervalSeconds}s" else ""
+      }
+      StatusBadge(modeBadge, CardSurfaceElevated, TextPrimary)
+      if (task.autoExecuteWhenReady) {
+        StatusBadge("Auto-envío si desbloqueado", WhatsAppGreenContainer, WhatsAppGreen)
       }
     }
 
@@ -371,20 +539,50 @@ private fun ScheduledTaskCard(
       overflow = TextOverflow.Ellipsis,
     )
 
-    Spacer(modifier = Modifier.height(8.dp))
+    if (task.lastFailureReason.isNotBlank()) {
+      Spacer(modifier = Modifier.height(8.dp))
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+          .fillMaxWidth()
+          .clip(RoundedCornerShape(10.dp))
+          .background(DangerContainer)
+          .padding(8.dp),
+      ) {
+        Icon(Icons.Rounded.ErrorOutline, contentDescription = null, tint = DangerRed, modifier = Modifier.size(16.dp))
+        Spacer(modifier = Modifier.width(6.dp))
+        Text(
+          text = task.lastFailureReason,
+          style = MaterialTheme.typography.bodySmall,
+          color = TextPrimary,
+        )
+      }
+    }
+
+    Spacer(modifier = Modifier.height(10.dp))
     Row(
       horizontalArrangement = Arrangement.SpaceBetween,
       verticalAlignment = Alignment.CenterVertically,
       modifier = Modifier.fillMaxWidth(),
     ) {
-      Row {
-        IconButton(onClick = onDuplicate) {
-          Icon(Icons.Rounded.ContentCopy, contentDescription = "Duplicar programación", tint = TextPrimary)
+      Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        IconButton(onClick = onEdit) {
+          Icon(Icons.Rounded.Edit, contentDescription = "Editar programación", tint = TextPrimary)
+        }
+        if (isPauseable) {
+          IconButton(onClick = onPause) {
+            Icon(Icons.Rounded.Pause, contentDescription = "Pausar programación", tint = WarningAmber)
+          }
+        } else {
+          IconButton(onClick = onResume) {
+            Icon(Icons.Rounded.PlayArrow, contentDescription = "Reanudar programación", tint = WhatsAppGreen)
+          }
         }
         IconButton(onClick = onDelete) {
           Icon(Icons.Rounded.DeleteOutline, contentDescription = "Eliminar programación", tint = DangerRed)
         }
       }
+
       Surface(
         shape = RoundedCornerShape(12.dp),
         color = WhatsAppGreenContainer,
@@ -396,260 +594,9 @@ private fun ScheduledTaskCard(
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
           Icon(Icons.Rounded.PlayArrow, contentDescription = null, tint = WhatsAppGreen, modifier = Modifier.size(16.dp))
           Spacer(modifier = Modifier.width(4.dp))
-          Text("Preparar ahora", style = MaterialTheme.typography.labelMedium, color = WhatsAppGreen, fontWeight = FontWeight.Bold)
+          Text("Enviar ahora", style = MaterialTheme.typography.labelMedium, color = WhatsAppGreen, fontWeight = FontWeight.Bold)
         }
       }
     }
   }
-}
-
-@Composable
-private fun CreateScheduleDialog(
-  defaultTitle: String,
-  savedTemplates: List<SavedMessageList>,
-  onDismiss: () -> Unit,
-  onCreate: (
-    title: String,
-    triggerAtMillis: Long,
-    recurrence: SchedulerRecurrence,
-    expirationMillis: Long?,
-    notifyBeforeMinutes: Int,
-    selectedTemplate: SavedMessageList?,
-  ) -> Unit,
-) {
-  val context = LocalContext.current
-  var title by remember { mutableStateOf(defaultTitle.take(48)) }
-  var selectedTemplate by remember { mutableStateOf<SavedMessageList?>(null) }
-  var recurrence by remember { mutableStateOf(SchedulerRecurrence.NONE) }
-  var expirationDays by remember { mutableStateOf<Int?>(null) }
-  var notifyBeforeMinutes by remember { mutableIntStateOf(5) }
-  var chosenTriggerMillis by remember { mutableLongStateOf(System.currentTimeMillis() + 60 * 60_000L) }
-  val previewDate = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date(chosenTriggerMillis))
-
-  AlertDialog(
-    onDismissRequest = onDismiss,
-    containerColor = CardSurface,
-    titleContentColor = TextPrimary,
-    textContentColor = TextSecondary,
-    title = { Text("Nueva programación") },
-    text = {
-      Column(
-        modifier = Modifier
-          .heightIn(max = 420.dp)
-          .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-      ) {
-        OutlinedTextField(
-          value = title,
-          onValueChange = { title = it.take(48) },
-          label = { Text("Título de la tarea") },
-          singleLine = true,
-          colors = OutlinedTextFieldDefaults.colors(
-            focusedBorderColor = WhatsAppGreen,
-            unfocusedBorderColor = OutlineSubtle,
-            focusedTextColor = TextPrimary,
-            unfocusedTextColor = TextPrimary,
-          ),
-        )
-
-        if (savedTemplates.isNotEmpty()) {
-          Text("Contenido:", style = MaterialTheme.typography.labelSmall, color = TextSecondary)
-          Row(
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            modifier = Modifier.horizontalScroll(rememberScrollState()),
-          ) {
-            val draftSelected = selectedTemplate == null
-            Surface(
-              shape = RoundedCornerShape(999.dp),
-              color = if (draftSelected) WhatsAppGreenContainer else CardSurfaceElevated,
-              border = BorderStroke(1.dp, if (draftSelected) WhatsAppGreen else OutlineSubtle),
-              modifier = Modifier
-                .clip(RoundedCornerShape(999.dp))
-                .clickable { selectedTemplate = null },
-            ) {
-              Text(
-                text = "Borrador actual",
-                style = MaterialTheme.typography.labelSmall,
-                color = if (draftSelected) WhatsAppGreen else TextPrimary,
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-              )
-            }
-            savedTemplates.forEach { tpl ->
-              val sel = selectedTemplate?.id == tpl.id
-              Surface(
-                shape = RoundedCornerShape(999.dp),
-                color = if (sel) WhatsAppGreenContainer else CardSurfaceElevated,
-                border = BorderStroke(1.dp, if (sel) WhatsAppGreen else OutlineSubtle),
-                modifier = Modifier
-                  .clip(RoundedCornerShape(999.dp))
-                  .clickable { selectedTemplate = tpl },
-              ) {
-                Text(
-                  text = tpl.title,
-                  style = MaterialTheme.typography.labelSmall,
-                  color = if (sel) WhatsAppGreen else TextPrimary,
-                  modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                )
-              }
-            }
-          }
-        }
-
-        Text("Fecha y hora ($previewDate):", style = MaterialTheme.typography.labelSmall, color = WhatsAppGreen)
-        Row(
-          horizontalArrangement = Arrangement.spacedBy(6.dp),
-          modifier = Modifier.horizontalScroll(rememberScrollState()),
-        ) {
-          Surface(
-            shape = RoundedCornerShape(999.dp),
-            color = WhatsAppGreenContainer,
-            border = BorderStroke(1.dp, WhatsAppGreen),
-            modifier = Modifier
-              .clip(RoundedCornerShape(999.dp))
-              .clickable {
-                val cal = Calendar.getInstance().apply { timeInMillis = chosenTriggerMillis }
-                runCatching {
-                  DatePickerDialog(
-                    context,
-                    { _, year, month, day ->
-                      TimePickerDialog(
-                        context,
-                        { _, hour, minute ->
-                          val picked = Calendar.getInstance().apply {
-                            set(year, month, day, hour, minute, 0)
-                            set(Calendar.MILLISECOND, 0)
-                          }
-                          chosenTriggerMillis = picked.timeInMillis
-                        },
-                        cal.get(Calendar.HOUR_OF_DAY),
-                        cal.get(Calendar.MINUTE),
-                        true,
-                      ).show()
-                    },
-                    cal.get(Calendar.YEAR),
-                    cal.get(Calendar.MONTH),
-                    cal.get(Calendar.DAY_OF_MONTH),
-                  ).show()
-                }
-              },
-          ) {
-            Text(
-              text = "Elegir fecha y hora",
-              style = MaterialTheme.typography.labelSmall,
-              color = WhatsAppGreen,
-              fontWeight = FontWeight.Bold,
-              modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-            )
-          }
-          listOf(15 to "+15 min", 60 to "+1 hora", 240 to "+4 horas", 1440 to "+24 horas").forEach { (mins, label) ->
-            Surface(
-              shape = RoundedCornerShape(999.dp),
-              color = CardSurfaceElevated,
-              border = BorderStroke(1.dp, OutlineSubtle),
-              modifier = Modifier
-                .clip(RoundedCornerShape(999.dp))
-                .clickable { chosenTriggerMillis = System.currentTimeMillis() + mins * 60_000L },
-            ) {
-              Text(
-                text = label,
-                style = MaterialTheme.typography.labelSmall,
-                color = TextPrimary,
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-              )
-            }
-          }
-        }
-
-        Text("Alerta previa antes de ejecutar:", style = MaterialTheme.typography.labelSmall, color = TextSecondary)
-        Row(
-          horizontalArrangement = Arrangement.spacedBy(6.dp),
-          modifier = Modifier.horizontalScroll(rememberScrollState()),
-        ) {
-          listOf(0 to "Sin previa", 5 to "5 min antes", 15 to "15 min antes", 30 to "30 min antes").forEach { (mins, label) ->
-            val selected = notifyBeforeMinutes == mins
-            Surface(
-              shape = RoundedCornerShape(999.dp),
-              color = if (selected) WhatsAppGreenContainer else CardSurfaceElevated,
-              border = BorderStroke(1.dp, if (selected) WhatsAppGreen else OutlineSubtle),
-              modifier = Modifier
-                .clip(RoundedCornerShape(999.dp))
-                .clickable { notifyBeforeMinutes = mins },
-            ) {
-              Text(
-                text = label,
-                style = MaterialTheme.typography.labelSmall,
-                color = if (selected) WhatsAppGreen else TextPrimary,
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-              )
-            }
-          }
-        }
-
-        Text("Recurrencia:", style = MaterialTheme.typography.labelSmall, color = TextSecondary)
-        Row(
-          horizontalArrangement = Arrangement.spacedBy(6.dp),
-          modifier = Modifier.horizontalScroll(rememberScrollState()),
-        ) {
-          SchedulerRecurrence.entries.forEach { rec ->
-            val selected = recurrence == rec
-            Surface(
-              shape = RoundedCornerShape(999.dp),
-              color = if (selected) WhatsAppGreenContainer else CardSurfaceElevated,
-              border = BorderStroke(1.dp, if (selected) WhatsAppGreen else OutlineSubtle),
-              modifier = Modifier
-                .clip(RoundedCornerShape(999.dp))
-                .clickable { recurrence = rec },
-            ) {
-              Text(
-                text = rec.label,
-                style = MaterialTheme.typography.labelSmall,
-                color = if (selected) WhatsAppGreen else TextPrimary,
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-              )
-            }
-          }
-        }
-
-        Text("Expiración:", style = MaterialTheme.typography.labelSmall, color = TextSecondary)
-        Row(
-          horizontalArrangement = Arrangement.spacedBy(6.dp),
-          modifier = Modifier.horizontalScroll(rememberScrollState()),
-        ) {
-          listOf(null to "Sin expiración", 7 to "7 días", 30 to "30 días").forEach { (days, label) ->
-            val selected = expirationDays == days
-            Surface(
-              shape = RoundedCornerShape(999.dp),
-              color = if (selected) WhatsAppGreenContainer else CardSurfaceElevated,
-              border = BorderStroke(1.dp, if (selected) WhatsAppGreen else OutlineSubtle),
-              modifier = Modifier
-                .clip(RoundedCornerShape(999.dp))
-                .clickable { expirationDays = days },
-            ) {
-              Text(
-                text = label,
-                style = MaterialTheme.typography.labelSmall,
-                color = if (selected) WhatsAppGreen else TextPrimary,
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-              )
-            }
-          }
-        }
-      }
-    },
-    confirmButton = {
-      TextButton(
-        onClick = {
-          val expMillis = expirationDays?.let { System.currentTimeMillis() + it * 86_400_000L }
-          onCreate(title, chosenTriggerMillis, recurrence, expMillis, notifyBeforeMinutes, selectedTemplate)
-        },
-      ) {
-        Text("Guardar", color = WhatsAppGreen, fontWeight = FontWeight.Bold)
-      }
-    },
-    dismissButton = {
-      TextButton(onClick = onDismiss) {
-        Text("Cancelar", color = TextSecondary)
-      }
-    },
-  )
 }

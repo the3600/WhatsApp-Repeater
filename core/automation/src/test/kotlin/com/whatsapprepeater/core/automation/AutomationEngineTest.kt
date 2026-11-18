@@ -456,4 +456,79 @@ class AutomationEngineTest {
     assertEquals(AutomationStatus.ERROR, engine.state.value.status)
     assertTrue(engine.state.value.errorMessage!!.contains("{nombre}"))
   }
+
+  @Test
+  fun `populates diagnostic stage and observed header when stopping due to recipient mismatch`() = runTest {
+    val dispatcher = StandardTestDispatcher(testScheduler)
+    val driver = FakeAccessibilityDriver(initialHeader = "Juan Pérez García")
+    val engine = AutomationEngine(
+      driver = driver,
+      delayProvider = { },
+      scope = TestScope(dispatcher),
+    )
+
+    engine.start(
+      AutomationConfig(
+        contact = ContactInfo(id = "j", name = "Juan Pérez", phoneNumber = "+57 310 555 0000"),
+        mode = MessageMode.RepeatSingleMessage("Hola", 1),
+        intervalRange = IntervalRange(5, 10),
+        userConfirmed = true,
+      ),
+    )
+    dispatcher.scheduler.advanceUntilIdle()
+
+    assertTrue(driver.sentMessages.isEmpty())
+    assertEquals(AutomationStatus.ERROR, engine.state.value.status)
+    assertEquals("Verificación de destinatario", engine.state.value.diagnosticStage)
+    assertTrue(engine.state.value.observedHeaderSummary.contains("Juan Pérez García"))
+  }
+
+  @Test
+  fun `stops immediately when accessibility service disconnects mid-execution`() = runTest {
+    val dispatcher = StandardTestDispatcher(testScheduler)
+    val connected = MutableStateFlow(true)
+    val driver = object : AccessibilityDriver {
+      override val isServiceConnected: StateFlow<Boolean> = connected
+      override fun openWhatsAppChat(contact: ContactInfo, targetPackage: String): Boolean = true
+      override fun openWhatsAppHome(targetPackage: String): Boolean = true
+      override fun captureScreenSnapshot(): ScreenSnapshot? = null
+      override fun clickNode(nodeId: String): Boolean = false
+      override fun setText(nodeId: String, text: String): Boolean {
+        connected.value = false
+        return false
+      }
+      override fun navigateBack(): Boolean = false
+    }
+    val fakeBackedDriver = FakeAccessibilityDriver()
+    val hybridDriver = object : AccessibilityDriver by fakeBackedDriver {
+      override val isServiceConnected: StateFlow<Boolean> = connected
+      override fun clickNode(nodeId: String): Boolean {
+        val clicked = fakeBackedDriver.clickNode(nodeId)
+        if (clicked) connected.value = false
+        return clicked
+      }
+    }
+    val records = mutableListOf<ExecutionRecord>()
+    val engine = AutomationEngine(
+      driver = hybridDriver,
+      onExecutionFinished = { records.add(it) },
+      delayProvider = { },
+      scope = TestScope(dispatcher),
+    )
+
+    engine.start(
+      AutomationConfig(
+        contact = contact,
+        mode = MessageMode.MultipleMessages(listOf("Primero", "Segundo")),
+        intervalRange = IntervalRange(5, 6),
+        userConfirmed = true,
+      ),
+    )
+    dispatcher.scheduler.advanceUntilIdle()
+
+    assertEquals(AutomationStatus.ERROR, engine.state.value.status)
+    assertEquals("Servicio de Accesibilidad", engine.state.value.diagnosticStage)
+    assertEquals(1, records.size)
+    assertEquals(0, records.first().confirmedCount)
+  }
 }

@@ -33,6 +33,8 @@ data class AutomationState(
   val remainingIntervalSeconds: Int = 0,
   val statusDetail: String = "Listo para iniciar",
   val errorMessage: String? = null,
+  val diagnosticStage: String = "",
+  val observedHeaderSummary: String = "",
   val batchId: String = "",
   val activeIntervalRangeText: String = "",
   val startedAtMillis: Long = 0L,

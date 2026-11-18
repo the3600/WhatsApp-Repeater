@@ -27,14 +27,21 @@ import com.whatsapprepeater.core.data.repository.SavedConfigRepository
 import com.whatsapprepeater.core.data.repository.ScheduledTaskRepository
 import com.whatsapprepeater.core.data.repository.SettingsRepository
 import com.whatsapprepeater.core.model.AutomationConfig
+import com.whatsapprepeater.core.model.AutomationStatus
 import com.whatsapprepeater.core.model.ContactInfo
+import com.whatsapprepeater.core.model.DynamicVariablesEngine
+import com.whatsapprepeater.core.model.ExecutionFinalStatus
+import com.whatsapprepeater.core.model.ExecutionRecord
 import com.whatsapprepeater.core.model.IntervalRange
 import com.whatsapprepeater.core.model.MessageMode
 import com.whatsapprepeater.core.model.PersistedAutomationDraft
 import com.whatsapprepeater.core.model.SafetyLimits
 import com.whatsapprepeater.core.model.ScheduledTask
 import com.whatsapprepeater.core.model.ScheduledTaskStatus
+import com.whatsapprepeater.core.model.SchedulerLogic
+import com.whatsapprepeater.core.model.SchedulerRecurrence
 import com.whatsapprepeater.core.model.SavedMessageList
+import com.whatsapprepeater.core.model.VariableResolutionResult
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -153,6 +160,7 @@ class AppContainer(context: Context) {
       AppDatabase.MIGRATION_2_3,
       AppDatabase.MIGRATION_3_4,
       AppDatabase.MIGRATION_4_5,
+      AppDatabase.MIGRATION_5_6,
     )
     // Nunca usar fallbackToDestructiveMigration() para no borrar datos al actualizar.
     .build()
@@ -189,6 +197,7 @@ class AppContainer(context: Context) {
     driver = accessibilityDriver,
     onExecutionFinished = { record ->
       historyRepository.recordExecution(record)
+      finalizeScheduledTaskFromExecution(record)
     },
     scope = appScope,
   )
@@ -198,6 +207,9 @@ class AppContainer(context: Context) {
 
   private val _pendingScheduleLaunch = MutableStateFlow<Long?>(null)
   val pendingScheduleLaunch: StateFlow<Long?> = _pendingScheduleLaunch.asStateFlow()
+
+  private val _pendingActiveAutomationLaunch = MutableStateFlow(false)
+  val pendingActiveAutomationLaunch: StateFlow<Boolean> = _pendingActiveAutomationLaunch.asStateFlow()
 
   @Volatile
   private var activeScheduledTaskId: Long? = null
@@ -278,6 +290,14 @@ class AppContainer(context: Context) {
     _pendingScheduleLaunch.value = null
   }
 
+  fun requestOpenActiveAutomation() {
+    _pendingActiveAutomationLaunch.value = true
+  }
+
+  fun clearPendingActiveAutomationLaunch() {
+    _pendingActiveAutomationLaunch.value = false
+  }
+
   fun loadTemplateIntoDraft(template: SavedMessageList) {
     activeScheduledTaskId = null
     updateDraft { current ->
@@ -316,23 +336,151 @@ class AppContainer(context: Context) {
     }
   }
 
+  sealed interface ScheduledLaunchResult {
+    data object Started : ScheduledLaunchResult
+    data class Blocked(val reason: String) : ScheduledLaunchResult
+  }
+
   fun markActiveScheduledTaskStarted() {
     val taskId = activeScheduledTaskId ?: return
-    activeScheduledTaskId = null
     appScope.launch {
       runCatching {
         val task = scheduledTaskRepository.getById(taskId) ?: return@runCatching
         val now = System.currentTimeMillis()
-        val deltaSeconds = ((now - task.triggerAtMillis) / 1000L)
         scheduledTaskRepository.saveTask(
           task.copy(
-            status = ScheduledTaskStatus.COMPLETED,
-            enabled = task.recurrence != com.whatsapprepeater.core.model.SchedulerRecurrence.NONE,
-            lastExecutedAtMillis = now,
-            lastPunctualityDeltaSeconds = deltaSeconds,
+            status = ScheduledTaskStatus.ACTIVE,
+            lastFailureReason = "",
             updatedAtMillis = now,
           ),
         )
+      }
+    }
+  }
+
+  suspend fun executeScheduledTaskIfReady(task: ScheduledTask): ScheduledLaunchResult {
+    val readiness = schedulerAlarmHelper.checkAutoExecuteReadiness(
+      isAccessibilityConnected = accessibilityDriver.isServiceConnected.value,
+      isAutomationAlreadyRunning = automationEngine.state.value.isRunning || automationEngine.state.value.isPaused,
+    )
+    if (!readiness.canExecute) {
+      return ScheduledLaunchResult.Blocked(readiness.reason ?: "Condiciones no disponibles para envío automático.")
+    }
+
+    val contact = ContactInfo(
+      id = task.contactId.ifBlank { "${task.contactName}_${task.contactPhone}" },
+      name = task.contactName,
+      phoneNumber = task.contactPhone,
+    )
+
+    val resolvedMode = if (task.isMultipleMode) {
+      val (resolved, err) = DynamicVariablesEngine.validateBatch(task.messages, contact)
+      if (err != null) {
+        return ScheduledLaunchResult.Blocked(err.reason)
+      }
+      MessageMode.MultipleMessages(resolved)
+    } else {
+      when (val res = DynamicVariablesEngine.resolveOrValidate(task.singleMessage, contact)) {
+        is VariableResolutionResult.Resolved -> MessageMode.RepeatSingleMessage(res.text, task.repeatCount)
+        is VariableResolutionResult.Unresolved -> return ScheduledLaunchResult.Blocked(res.reason)
+      }
+    }
+
+    val targetPkg = if (task.preferWhatsAppBusiness) {
+      AutomationConfig.WHATSAPP_BUSINESS_PACKAGE
+    } else {
+      AutomationConfig.WHATSAPP_PACKAGE
+    }
+    val config = AutomationConfig(
+      contact = contact,
+      mode = resolvedMode,
+      intervalRange = IntervalRange(task.minIntervalSeconds, task.maxIntervalSeconds),
+      userConfirmed = true,
+      targetPackage = targetPkg,
+    )
+
+    loadScheduledTaskIntoDraft(task)
+    val now = System.currentTimeMillis()
+    scheduledTaskRepository.saveTask(
+      task.copy(
+        status = ScheduledTaskStatus.ACTIVE,
+        lastFailureReason = "",
+        updatedAtMillis = now,
+      ),
+    )
+
+    automationEngine.start(config)
+    val immediateState = automationEngine.state.value
+    if (immediateState.status == AutomationStatus.ERROR) {
+      activeScheduledTaskId = null
+      return ScheduledLaunchResult.Blocked(immediateState.errorMessage ?: "No se pudo iniciar el motor de envío.")
+    }
+    return ScheduledLaunchResult.Started
+  }
+
+  private suspend fun finalizeScheduledTaskFromExecution(record: ExecutionRecord) {
+    val taskId = activeScheduledTaskId ?: return
+    activeScheduledTaskId = null
+    runCatching {
+      val task = scheduledTaskRepository.getById(taskId) ?: return@runCatching
+      val now = System.currentTimeMillis()
+      val deltaSeconds = ((now - task.triggerAtMillis) / 1000L)
+      val succeeded = record.finalStatus == ExecutionFinalStatus.COMPLETED && record.confirmedCount > 0
+
+      if (succeeded) {
+        val nextTrigger = SchedulerLogic.computeNextTriggerMillis(task, now)
+        val updated = if (nextTrigger != null) {
+          task.copy(
+            triggerAtMillis = nextTrigger,
+            status = ScheduledTaskStatus.PENDING,
+            enabled = true,
+            lastExecutedAtMillis = now,
+            lastPunctualityDeltaSeconds = deltaSeconds,
+            lastFailureReason = "",
+            updatedAtMillis = now,
+          )
+        } else {
+          task.copy(
+            status = ScheduledTaskStatus.COMPLETED,
+            enabled = false,
+            lastExecutedAtMillis = now,
+            lastPunctualityDeltaSeconds = deltaSeconds,
+            lastFailureReason = "",
+            updatedAtMillis = now,
+          )
+        }
+        scheduledTaskRepository.saveTask(updated)
+        if (updated.enabled && nextTrigger != null) {
+          schedulerAlarmHelper.scheduleTaskReminder(updated)
+        } else {
+          schedulerAlarmHelper.cancelTaskReminder(updated.id)
+        }
+      } else {
+        val nextTrigger = SchedulerLogic.computeNextTriggerMillis(task, now)
+        val updated = if (nextTrigger != null) {
+          task.copy(
+            triggerAtMillis = nextTrigger,
+            status = ScheduledTaskStatus.FAILED,
+            enabled = true,
+            lastPunctualityDeltaSeconds = deltaSeconds,
+            lastFailureReason = record.statusDetail,
+            updatedAtMillis = now,
+          )
+        } else {
+          task.copy(
+            enabled = false,
+            status = ScheduledTaskStatus.FAILED,
+            lastPunctualityDeltaSeconds = deltaSeconds,
+            lastFailureReason = record.statusDetail,
+            updatedAtMillis = now,
+          )
+        }
+        scheduledTaskRepository.saveTask(updated)
+        if (updated.enabled && nextTrigger != null) {
+          schedulerAlarmHelper.scheduleTaskReminder(updated)
+        } else {
+          schedulerAlarmHelper.cancelTaskReminder(updated.id)
+        }
       }
     }
   }
