@@ -127,7 +127,7 @@ jobs:
           ls -lh dist-debug/WhatsApp-Repeater-Android.apk
 
       - name: Subir APK Debug como Artifact descargable
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: WhatsApp-Repeater-Android
           path: dist-debug/WhatsApp-Repeater-Android.apk
@@ -458,7 +458,7 @@ jobs:
 
       - name: Subir APK Release firmado como artefacto de verificación
         if: success() && steps.ver.outputs.should_publish == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: WhatsAppRepeater-release-signed
           path: |
