@@ -1,18 +1,28 @@
 package com.whatsapprepeater.app.ui.home
 
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
+import android.os.PowerManager
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.whatsapprepeater.app.AppContainer
 import com.whatsapprepeater.app.AutomationDraft
 import com.whatsapprepeater.app.autoreply.AutoReplyRuntimeState
+import com.whatsapprepeater.app.service.AccessibilitySettingsHelper
 import com.whatsapprepeater.core.model.AppSettings
 import com.whatsapprepeater.core.model.AutoReplySettings
 import com.whatsapprepeater.core.model.AutomationState
 import com.whatsapprepeater.core.model.DynamicVariablesEngine
 import com.whatsapprepeater.core.model.ExecutionRecord
+import com.whatsapprepeater.core.model.IntelligenceSnapshot
+import com.whatsapprepeater.core.model.LocalIntelligenceEngine
 import com.whatsapprepeater.core.model.ScheduledTask
 import com.whatsapprepeater.core.model.ScheduledTaskStatus
+import com.whatsapprepeater.core.model.SmartRecommendation
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -38,6 +48,7 @@ data class HomeUiState(
   val failedExecutionsCount: Int = 0,
   val savedTemplatesCount: Int = 0,
   val canInstallUpdates: Boolean = false,
+  val smartRecommendations: List<SmartRecommendation> = emptyList(),
 ) {
   val isAccessibilityReady: Boolean
     get() = isServiceConnected || isServiceEnabledInSettings
@@ -80,14 +91,26 @@ class HomeViewModel(
   private val settingsEnabledFlag = MutableStateFlow(false)
   private val whatsappInstalledFlag = MutableStateFlow(container.accessibilityDriver.isWhatsAppInstalled())
   private val canInstallUpdatesFlag = MutableStateFlow(container.updateManager.canRequestPackageInstalls())
+  private val ignoringBatteryFlag = MutableStateFlow(true)
+  private val exactAlarmsFlag = MutableStateFlow(container.schedulerAlarmHelper.canScheduleExactAlarms())
+  private val postNotificationsFlag = MutableStateFlow(true)
+
+  private val envPermissionsFlow = combine(
+    ignoringBatteryFlag,
+    exactAlarmsFlag,
+    postNotificationsFlag,
+  ) { battery, exactAlarms, postNotifs ->
+    listOf(battery, exactAlarms, postNotifs)
+  }
 
   private val systemStatusFlow = combine(
     container.accessibilityDriver.isServiceConnected,
     settingsEnabledFlag,
     whatsappInstalledFlag,
     canInstallUpdatesFlag,
-  ) { a11yConn, a11ySettings, waInstalled, canInstall ->
-    listOf(a11yConn, a11ySettings, waInstalled, canInstall)
+    envPermissionsFlow,
+  ) { a11yConn, a11ySettings, waInstalled, canInstall, env ->
+    listOf(a11yConn, a11ySettings, waInstalled, canInstall, env[0], env[1], env[2])
   }
 
   private val controlDataFlow = combine(
@@ -144,6 +167,29 @@ class HomeViewModel(
         it.finalStatus == com.whatsapprepeater.core.model.ExecutionFinalStatus.FAILED_SAFETY_CHECK
     }
 
+    val draftMessages = if (draft.isMultipleMode) {
+      draft.multipleMessages
+    } else {
+      listOfNotNull(draft.singleMessage.takeIf { it.isNotBlank() })
+    }
+    val smartRecommendations = LocalIntelligenceEngine.analyze(
+      IntelligenceSnapshot(
+        isAccessibilityReady = sys[0] || sys[1],
+        isWhatsAppInstalled = sys[2],
+        isIgnoringBatteryOptimizations = sys[4],
+        canScheduleExactAlarms = sys[5],
+        postNotificationsGranted = sys[6],
+        vacationPauseEnabled = settings.vacationPauseEnabled,
+        activeSchedules = activeSchedules,
+        recentExecutions = history,
+        savedTemplates = templates,
+        draftContact = draft.selectedContact,
+        draftMessages = draftMessages,
+        draftMinIntervalSeconds = draft.minIntervalSeconds,
+        isHyperOsOrXiaomi = isXiaomiOrPoco(),
+      ),
+    )
+
     HomeUiState(
       isServiceConnected = sys[0],
       isServiceEnabledInSettings = sys[1],
@@ -162,6 +208,7 @@ class HomeViewModel(
       completedExecutionsCount = completedExecs,
       failedExecutionsCount = failedExecs,
       savedTemplatesCount = templates.size,
+      smartRecommendations = smartRecommendations,
     )
   }.stateIn(
     scope = viewModelScope,
@@ -173,6 +220,21 @@ class HomeViewModel(
     settingsEnabledFlag.value = isEnabledInSystemSettings
     whatsappInstalledFlag.value = container.accessibilityDriver.isWhatsAppInstalled()
     canInstallUpdatesFlag.value = container.updateManager.canRequestPackageInstalls()
+    exactAlarmsFlag.value = container.schedulerAlarmHelper.canScheduleExactAlarms()
+  }
+
+  fun refreshSystemStatus(context: Context) {
+    val appCtx = context.applicationContext
+    refreshSystemStatus(AccessibilitySettingsHelper.isAccessibilityEnabledInSettings(appCtx))
+    val pm = appCtx.getSystemService(Context.POWER_SERVICE) as? PowerManager
+    ignoringBatteryFlag.value = pm?.isIgnoringBatteryOptimizations(appCtx.packageName) ?: true
+    postNotificationsFlag.value = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+      ContextCompat.checkSelfPermission(appCtx, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+  }
+
+  private fun isXiaomiOrPoco(): Boolean {
+    val maker = "${Build.MANUFACTURER} ${Build.BRAND}".lowercase()
+    return maker.contains("xiaomi") || maker.contains("poco") || maker.contains("redmi")
   }
 
   fun prepareNewAutomation(isMultipleMode: Boolean = true) {

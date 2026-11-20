@@ -1,5 +1,7 @@
 package com.whatsapprepeater.app.ui.home
 
+import android.content.Intent
+import android.provider.Settings
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -98,7 +100,10 @@ import com.whatsapprepeater.app.ui.theme.WhatsAppGreen
 import com.whatsapprepeater.app.ui.theme.WhatsAppGreenContainer
 import com.whatsapprepeater.core.model.ExecutionFinalStatus
 import com.whatsapprepeater.core.model.ExecutionRecord
+import com.whatsapprepeater.core.model.RecommendationAction
+import com.whatsapprepeater.core.model.RecommendationSeverity
 import com.whatsapprepeater.core.model.ScheduleCountdownFormatter
+import com.whatsapprepeater.core.model.SmartRecommendation
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -120,12 +125,18 @@ fun HomeScreen(
   onOpenDiagnostics: () -> Unit = {},
   onOpenAnalytics: () -> Unit = {},
   onOpenUpdates: () -> Unit = {},
+  onOpenSecurityCenter: () -> Unit = {},
+  onOpenEditor: () -> Unit = {},
 ) {
   val context = LocalContext.current
   val lifecycleOwner = LocalLifecycleOwner.current
   val state by viewModel.uiState.collectAsStateWithLifecycle()
   var showQuickGuideDialog by remember { mutableStateOf(false) }
   var liveNowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
+
+  LaunchedEffect(Unit) {
+    viewModel.refreshSystemStatus(context)
+  }
 
   LaunchedEffect(state.nextScheduledTask?.id, state.nextScheduledTask?.triggerAtMillis, state.settings.vacationPauseEnabled) {
     if (state.nextScheduledTask != null && !state.settings.vacationPauseEnabled) {
@@ -139,9 +150,7 @@ fun HomeScreen(
   DisposableEffect(lifecycleOwner) {
     val observer = LifecycleEventObserver { _, event ->
       if (event == Lifecycle.Event.ON_RESUME) {
-        viewModel.refreshSystemStatus(
-          AccessibilitySettingsHelper.isAccessibilityEnabledInSettings(context),
-        )
+        viewModel.refreshSystemStatus(context)
       }
     }
     lifecycleOwner.lifecycle.addObserver(observer)
@@ -497,6 +506,7 @@ fun HomeScreen(
             ControlShortcutChip("Biblioteca (${state.savedTemplatesCount})", Icons.Rounded.Bookmarks, onOpenLibrary)
             ControlShortcutChip("Historial", Icons.Rounded.History, onOpenHistoryTab)
             ControlShortcutChip("Diagnóstico", Icons.Rounded.HealthAndSafety, onOpenDiagnostics)
+            ControlShortcutChip("Seguridad", Icons.Rounded.Shield, onOpenSecurityCenter)
             ControlShortcutChip("Analíticas", Icons.Rounded.BarChart, onOpenAnalytics)
             ControlShortcutChip("Motor 2", Icons.Rounded.AutoAwesome) { onSelectBottomTab(BottomTab.AUTORESPONDER) }
             ControlShortcutChip(
@@ -504,6 +514,68 @@ fun HomeScreen(
               Icons.Rounded.SystemUpdate,
               onOpenUpdates,
             )
+          }
+        }
+      }
+
+      // Asesor Inteligente Local (100% en dispositivo, sin red)
+      if (state.smartRecommendations.isNotEmpty()) {
+        item {
+          SectionCard(
+            borderColor = if (state.smartRecommendations.any { it.severity == RecommendationSeverity.CRITICAL }) {
+              DangerRed.copy(alpha = 0.7f)
+            } else {
+              WarningAmber.copy(alpha = 0.6f)
+            },
+          ) {
+            Row(
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.SpaceBetween,
+              modifier = Modifier.fillMaxWidth(),
+            ) {
+              Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.AutoAwesome, contentDescription = null, tint = WhatsAppGreen, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                  text = "Asesor inteligente local",
+                  style = MaterialTheme.typography.titleMedium,
+                  color = TextPrimary,
+                  fontWeight = FontWeight.Bold,
+                )
+              }
+              StatusBadge(
+                label = "${state.smartRecommendations.size} sugerencia(s)",
+                containerColor = WarningContainer,
+                contentColor = WarningAmber,
+              )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            state.smartRecommendations.take(3).forEachIndexed { idx, rec ->
+              if (idx > 0) Spacer(modifier = Modifier.height(8.dp))
+              SmartRecommendationRow(
+                recommendation = rec,
+                onAction = {
+                  when (rec.action) {
+                    RecommendationAction.OPEN_ACCESSIBILITY -> onOpenPermissions()
+                    RecommendationAction.OPEN_SCHEDULER -> onOpenScheduler()
+                    RecommendationAction.OPEN_BATTERY -> {
+                      val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                      val ok = runCatching { context.startActivity(intent); true }.getOrDefault(false)
+                      if (!ok) AccessibilitySettingsHelper.openAppDetailsSettings(context)
+                    }
+                    RecommendationAction.OPEN_EXACT_ALARMS -> {
+                      com.whatsapprepeater.app.scheduler.SchedulerAlarmHelper(context.applicationContext).openExactAlarmSettings()
+                    }
+                    RecommendationAction.OPEN_NOTIFICATIONS -> onOpenDiagnostics()
+                    RecommendationAction.OPEN_EDITOR -> onOpenEditor()
+                    RecommendationAction.OPEN_SECURITY_CENTER -> onOpenSecurityCenter()
+                    RecommendationAction.OPEN_DIAGNOSTICS -> onOpenDiagnostics()
+                    RecommendationAction.NONE -> Unit
+                  }
+                },
+              )
+            }
           }
         }
       }
@@ -552,10 +624,12 @@ fun HomeScreen(
         }
       }
 
-      // Privacidad y control total
+      // Privacidad y control total (acceso al Centro de Seguridad y Privacidad)
       item {
-        SectionCard {
-          Row(verticalAlignment = Alignment.Top) {
+        SectionCard(
+          modifier = Modifier.clickable(onClick = onOpenSecurityCenter),
+        ) {
+          Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
               contentAlignment = Alignment.Center,
               modifier = Modifier
@@ -571,20 +645,22 @@ fun HomeScreen(
               )
             }
             Spacer(modifier = Modifier.width(12.dp))
-            Column {
+            Column(modifier = Modifier.weight(1f)) {
               Text(
-                text = "Privacidad y control total",
+                text = "Centro de Seguridad y Privacidad",
                 style = MaterialTheme.typography.titleMedium,
                 color = TextPrimary,
                 fontWeight = FontWeight.SemiBold,
               )
               Spacer(modifier = Modifier.height(4.dp))
               Text(
-                text = "Tus datos se procesan exclusivamente en este dispositivo. Puedes pausar o cancelar cualquier envío en tiempo real.",
+                text = "Datos 100% locales, bóveda Android Keystore, firma verificada y control de permisos. Toca para auditar.",
                 style = MaterialTheme.typography.bodySmall,
                 color = TextSecondary,
               )
             }
+            Spacer(modifier = Modifier.width(8.dp))
+            Icon(Icons.AutoMirrored.Rounded.ArrowForward, contentDescription = null, tint = WhatsAppGreen, modifier = Modifier.size(18.dp))
           }
         }
       }
@@ -764,6 +840,66 @@ private fun ControlShortcutChip(
       Icon(icon, contentDescription = null, tint = WhatsAppGreen, modifier = Modifier.size(15.dp))
       Spacer(modifier = Modifier.width(6.dp))
       Text(label, style = MaterialTheme.typography.labelMedium, color = TextPrimary)
+    }
+  }
+}
+
+@Composable
+private fun SmartRecommendationRow(
+  recommendation: SmartRecommendation,
+  onAction: () -> Unit,
+) {
+  val accent = when (recommendation.severity) {
+    RecommendationSeverity.CRITICAL -> DangerRed
+    RecommendationSeverity.WARNING -> WarningAmber
+    RecommendationSeverity.INFO -> WhatsAppGreen
+  }
+  val bg = when (recommendation.severity) {
+    RecommendationSeverity.CRITICAL -> DangerContainer.copy(alpha = 0.55f)
+    RecommendationSeverity.WARNING -> WarningContainer.copy(alpha = 0.55f)
+    RecommendationSeverity.INFO -> CardSurfaceElevated
+  }
+  Column(
+    modifier = Modifier
+      .fillMaxWidth()
+      .clip(RoundedCornerShape(12.dp))
+      .background(bg)
+      .padding(10.dp),
+  ) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+      Icon(
+        imageVector = when (recommendation.severity) {
+          RecommendationSeverity.CRITICAL -> Icons.Rounded.ErrorOutline
+          RecommendationSeverity.WARNING -> Icons.Rounded.WarningAmber
+          RecommendationSeverity.INFO -> Icons.Rounded.AutoAwesome
+        },
+        contentDescription = null,
+        tint = accent,
+        modifier = Modifier.size(16.dp),
+      )
+      Spacer(modifier = Modifier.width(6.dp))
+      Text(
+        text = recommendation.title,
+        style = MaterialTheme.typography.labelLarge,
+        color = TextPrimary,
+        fontWeight = FontWeight.Bold,
+      )
+    }
+    Spacer(modifier = Modifier.height(3.dp))
+    Text(
+      text = recommendation.message,
+      style = MaterialTheme.typography.bodySmall,
+      color = TextSecondary,
+    )
+    if (recommendation.action != RecommendationAction.NONE && !recommendation.actionLabel.isNullOrBlank()) {
+      Spacer(modifier = Modifier.height(6.dp))
+      Text(
+        text = "${recommendation.actionLabel} →",
+        style = MaterialTheme.typography.labelMedium,
+        color = accent,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier.clickable(onClick = onAction),
+      )
     }
   }
 }

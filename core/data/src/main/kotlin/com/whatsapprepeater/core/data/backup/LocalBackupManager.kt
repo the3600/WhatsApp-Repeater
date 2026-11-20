@@ -125,6 +125,7 @@ data class BackupSettingsDto(
   val hapticFeedbackEnabled: Boolean,
   val keepScreenOnDuringAutomation: Boolean,
   val vacationPauseEnabled: Boolean = false,
+  val themeMode: String = "DARK",
   val githubRepoOwner: String,
   val githubRepoName: String,
 )
@@ -235,6 +236,7 @@ object LocalBackupManager {
         hapticFeedbackEnabled = settings.hapticFeedbackEnabled,
         keepScreenOnDuringAutomation = settings.keepScreenOnDuringAutomation,
         vacationPauseEnabled = settings.vacationPauseEnabled,
+        themeMode = settings.themeMode.name,
         githubRepoOwner = settings.githubRepoOwner,
         githubRepoName = settings.githubRepoName,
       ),

@@ -38,6 +38,7 @@ import com.whatsapprepeater.app.ui.components.SectionCard
 import com.whatsapprepeater.app.ui.components.StatusBadge
 import com.whatsapprepeater.app.ui.theme.BackgroundBlack
 import com.whatsapprepeater.app.ui.theme.CardSurfaceElevated
+import com.whatsapprepeater.app.ui.theme.DangerContainer
 import com.whatsapprepeater.app.ui.theme.DangerRed
 import com.whatsapprepeater.app.ui.theme.TextPrimary
 import com.whatsapprepeater.app.ui.theme.TextSecondary
@@ -143,9 +144,64 @@ fun AnalyticsScreen(
           Text("Programador Local", style = MaterialTheme.typography.titleMedium, color = TextPrimary)
           Spacer(modifier = Modifier.height(10.dp))
           Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+            MetricBox("Creadas", "${stats.totalSchedulesCreated}", TextPrimary, Modifier.weight(1f))
             MetricBox("Pendientes", "${stats.pendingSchedules}", WarningAmber, Modifier.weight(1f))
+          }
+          Spacer(modifier = Modifier.height(8.dp))
+          Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
             MetricBox("Ejecutadas", "${stats.completedSchedules}", WhatsAppGreen, Modifier.weight(1f))
             MetricBox("Vencidas/Err", "${stats.missedOrFailedSchedules}", DangerRed, Modifier.weight(1f))
+          }
+        }
+      }
+
+      item {
+        SectionCard {
+          Text("Tiempo ahorrado (estimación local)", style = MaterialTheme.typography.titleMedium, color = TextPrimary)
+          Spacer(modifier = Modifier.height(8.dp))
+          Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+            MetricBox("Estimación acumulada", stats.estimatedTimeSavedFormatted, WhatsAppGreen, Modifier.weight(1f))
+            MetricBox(
+              "Envíos totales",
+              "${stats.totalMessagesConfirmed + stats.totalMotor2Sent}",
+              TextPrimary,
+              Modifier.weight(1f),
+            )
+          }
+          Spacer(modifier = Modifier.height(6.dp))
+          Text(
+            text = "Cálculo orientativo basado únicamente en tus registros locales (~12 s por envío confirmado y ~15 s por autorespuesta enviada).",
+            style = MaterialTheme.typography.bodySmall,
+            color = TextSecondary,
+          )
+        }
+      }
+
+      item {
+        SectionCard {
+          Text("Errores frecuentes registrados", style = MaterialTheme.typography.titleMedium, color = TextPrimary)
+          Spacer(modifier = Modifier.height(8.dp))
+          if (stats.frequentErrors.isEmpty()) {
+            Text("Sin errores registrados en el historial local.", style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+          } else {
+            stats.frequentErrors.forEach { err ->
+              Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .padding(vertical = 5.dp),
+              ) {
+                Text(
+                  text = err.reason,
+                  style = MaterialTheme.typography.bodySmall,
+                  color = TextPrimary,
+                  modifier = Modifier.weight(1f),
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                StatusBadge("${err.count}x", DangerContainer, DangerRed)
+              }
+            }
           }
         }
       }

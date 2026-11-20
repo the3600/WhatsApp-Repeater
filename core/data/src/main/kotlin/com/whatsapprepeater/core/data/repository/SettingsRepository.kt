@@ -12,6 +12,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.whatsapprepeater.core.model.AppSettings
 import com.whatsapprepeater.core.model.SafetyLimits
+import com.whatsapprepeater.core.model.ThemeMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -39,6 +40,8 @@ interface SettingsRepository {
 
   suspend fun updateVacationPause(enabled: Boolean)
 
+  suspend fun updateThemeMode(mode: ThemeMode)
+
   suspend fun updateGitHubRepository(owner: String, repo: String)
 
   suspend fun resetToDefaults()
@@ -56,6 +59,7 @@ class DataStoreSettingsRepository(
     val HAPTIC_FEEDBACK = booleanPreferencesKey("haptic_feedback_enabled")
     val KEEP_SCREEN_ON = booleanPreferencesKey("keep_screen_on_during_automation")
     val VACATION_PAUSE = booleanPreferencesKey("scheduler_vacation_pause")
+    val THEME_MODE = stringPreferencesKey("app_theme_mode")
     val GITHUB_OWNER = stringPreferencesKey("github_repo_owner")
     val GITHUB_REPO = stringPreferencesKey("github_repo_name")
     val COMPOSER_DRAFT = stringPreferencesKey("composer_draft_buffer")
@@ -86,6 +90,9 @@ class DataStoreSettingsRepository(
     val haptic = prefs[Keys.HAPTIC_FEEDBACK] ?: true
     val keepScreenOn = prefs[Keys.KEEP_SCREEN_ON] ?: true
     val vacationPause = prefs[Keys.VACATION_PAUSE] ?: false
+    val themeMode = prefs[Keys.THEME_MODE]?.let { raw ->
+      runCatching { ThemeMode.valueOf(raw) }.getOrNull()
+    } ?: ThemeMode.DARK
     val owner = prefs[Keys.GITHUB_OWNER]?.takeIf { it.isNotBlank() } ?: "the3600"
     val repo = prefs[Keys.GITHUB_REPO]?.takeIf { it.isNotBlank() } ?: "WhatsApp-Repeater"
 
@@ -97,6 +104,7 @@ class DataStoreSettingsRepository(
       hapticFeedbackEnabled = haptic,
       keepScreenOnDuringAutomation = keepScreenOn,
       vacationPauseEnabled = vacationPause,
+      themeMode = themeMode,
       githubRepoOwner = owner,
       githubRepoName = repo,
     )
@@ -142,6 +150,12 @@ class DataStoreSettingsRepository(
   override suspend fun updateVacationPause(enabled: Boolean) {
     context.settingsDataStore.edit { prefs ->
       prefs[Keys.VACATION_PAUSE] = enabled
+    }
+  }
+
+  override suspend fun updateThemeMode(mode: ThemeMode) {
+    context.settingsDataStore.edit { prefs ->
+      prefs[Keys.THEME_MODE] = mode.name
     }
   }
 

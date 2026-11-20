@@ -14,6 +14,7 @@ import com.whatsapprepeater.core.model.AutomationState
 import com.whatsapprepeater.core.model.PersistedAutomationDraft
 import com.whatsapprepeater.core.model.SafetyLimits
 import com.whatsapprepeater.core.model.SavedMessageList
+import com.whatsapprepeater.core.model.ThemeMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -92,6 +93,10 @@ class SettingsBackupViewModel(
 
   fun setPreferWhatsAppBusiness(enabled: Boolean) {
     viewModelScope.launch { container.settingsRepository.updatePreferWhatsAppBusiness(enabled) }
+  }
+
+  fun setThemeMode(mode: ThemeMode) {
+    viewModelScope.launch { container.settingsRepository.updateThemeMode(mode) }
   }
 
   fun adjustDefaultMinInterval(delta: Int) {
@@ -191,6 +196,8 @@ class SettingsBackupViewModel(
         container.settingsRepository.updateHapticFeedback(payload.settings.hapticFeedbackEnabled)
         container.settingsRepository.updateKeepScreenOn(payload.settings.keepScreenOnDuringAutomation)
         container.settingsRepository.updateVacationPause(payload.settings.vacationPauseEnabled)
+        val restoredTheme = runCatching { ThemeMode.valueOf(payload.settings.themeMode) }.getOrDefault(ThemeMode.DARK)
+        container.settingsRepository.updateThemeMode(restoredTheme)
         container.settingsRepository.updateGitHubRepository(
           payload.settings.githubRepoOwner,
           payload.settings.githubRepoName,

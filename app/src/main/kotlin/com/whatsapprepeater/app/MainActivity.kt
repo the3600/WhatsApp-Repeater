@@ -6,12 +6,18 @@ import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.whatsapprepeater.app.scheduler.SchedulerAlarmHelper
 import com.whatsapprepeater.app.ui.theme.WhatsAppRepeaterTheme
+import com.whatsapprepeater.core.model.AppSettings
+import com.whatsapprepeater.core.model.ThemeMode
 
 class MainActivity : ComponentActivity() {
   private var appContainer: AppContainer? = null
@@ -27,7 +33,30 @@ class MainActivity : ComponentActivity() {
     handleIncomingIntent(intent, container)
 
     setContent {
-      WhatsAppRepeaterTheme {
+      val settings by container.settingsRepository.settings.collectAsStateWithLifecycle(
+        initialValue = AppSettings(),
+      )
+      val systemDark = isSystemInDarkTheme()
+      val useDark = when (settings.themeMode) {
+        ThemeMode.DARK -> true
+        ThemeMode.LIGHT -> false
+        ThemeMode.SYSTEM -> systemDark
+      }
+
+      DisposableEffect(useDark) {
+        val barStyle = if (useDark) {
+          SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+        } else {
+          SystemBarStyle.light(
+            android.graphics.Color.TRANSPARENT,
+            android.graphics.Color.TRANSPARENT,
+          )
+        }
+        enableEdgeToEdge(statusBarStyle = barStyle, navigationBarStyle = barStyle)
+        onDispose {}
+      }
+
+      WhatsAppRepeaterTheme(themeMode = settings.themeMode) {
         Surface(
           modifier = Modifier.fillMaxSize(),
           color = MaterialTheme.colorScheme.background,

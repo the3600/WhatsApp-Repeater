@@ -1,121 +1,88 @@
-# WhatsApp Repeater (Android Nativo)
+# WhatsApp Repeater 2.0 (Android Nativo)
 
-Aplicación nativa para Android desarrollada en **Kotlin**, **Jetpack Compose** y **Material Design 3**, diseñada para automatizar de forma **transparente, controlada y explícita** el envío secuencial o repetido de mensajes a un único contacto seleccionado en WhatsApp mediante **Android Accessibility Service**.
+Aplicación nativa para Android desarrollada en **Kotlin**, **Jetpack Compose** y **Material Design 3**, diseñada para redactar, organizar, programar, repetir y automatizar mensajes en WhatsApp y WhatsApp Business de forma **100% local, transparente, segura y bajo control explícito del usuario**.
 
 ---
 
 ## Arquitectura modular
 
-El proyecto está organizado en módulos Gradle independientes y clases desacopladas:
+El proyecto está organizado en 6 módulos Gradle desacoplados:
 
-- **`:core:model`**: Modelos de dominio (`ContactInfo`, `MessageMode`, `IntervalRange`, `SafetyLimits`, `AutomationConfig`, `AutomationState`, `ExecutionRecord`, `SavedMessageList`, `PersistedAutomationDraft`, `AppSettings`).
-- **`:core:automation`**: Motor de automatización desacoplado del framework para facilitar pruebas unitarias:
-  - `AutomationEngine`: Orquesta el flujo completo de 14 pasos con soporte para `INICIAR`, `PAUSAR`, `REANUDAR` y `DETENER`.
-  - `WhatsAppNavigator`: Reconoce pantallas de WhatsApp (`OpenConversation`, `HomeChatList`, `SearchMode`, `UnexpectedOrError`, `ExternalApp`) mediante heurísticas resilientes sin depender de un único ID fijo.
-  - `MessageQueueManager`: Gestiona las colas en modalidad de mensajes múltiples o mensaje repetido.
-  - `RandomIntervalGenerator`: Calcula esperas aleatorias dentro del rango `[mínimo, máximo]` validado.
-- **`:core:data`**: Persistencia local con migraciones controladas y respaldo previo:
-  - `AppDatabase` (`version = 2`, `MIGRATION_1_2` sin borrado destructivo) + `DatabaseBackupManager` (crea copias SQLite automáticas antes de migrar).
-  - `HistoryRepository`: Almacena metadatos de ejecución. No guarda contraseñas ni sesiones de WhatsApp.
-  - `SavedConfigRepository`: Conserva mensajes guardados, listas de mensajes, contacto seleccionado e intervalos entre reinicios y actualizaciones.
-  - `SettingsRepository` (DataStore): Guarda preferencias del usuario y repositorio de actualizaciones.
-  - `ContactsRepository`: Consulta contactos locales únicamente tras la autorización explícita del usuario.
-- **`:core:updater`**: Comparador semántico, parser de GitHub Releases, verificador `SHA-256` y validador de compatibilidad (`applicationId`, `versionCode`, firma, `minSdk`).
-- **`:app`**: Interfaz Compose oscura con acento verde WhatsApp, `MainActivity`, `AutomationAccessibilityService`, `UpdateManager`, `UpdatesScreen` y las pantallas principales.
+- **`:core:model`**: Modelos de dominio (`ContactInfo`, `MessageMode`, `IntervalRange`, `SafetyLimits`, `AutomationConfig`, `AutomationState`, `ExecutionRecord`, `SavedMessageList`, `ScheduledTask`, `AutoReplyRule`, `AutoReplySettings`, `AppSettings`, `ThemeMode`), motor de variables dinámicas (`DynamicVariablesEngine`), formateador de cuenta regresiva (`ScheduleCountdownFormatter`) y asesor proactivo 100% local (`LocalIntelligenceEngine`).
+- **`:core:automation`**: **Motor 1 (Automatización controlada por Accesibilidad)**:
+  - `AutomationEngine`: Orquesta el flujo completo con soporte para `INICIAR`, `PAUSAR`, `REANUDAR`, `DETENER` y detención inmediata por seguridad.
+  - `ContactVerifier`: Verificación estricta de destinatario antes de escribir (normalización Unicode/BiDi/NBSP, equivalencias México `+521`/`+52`, protección contra contactos similares y exclusión del `RecyclerView` del chat).
+  - `WhatsAppNavigator`: Reconocimiento resiliente de pantallas (`OpenConversation`, `HomeChatList`, `SearchMode`, `UnexpectedOrError`, `ExternalApp`) sin depender de un único ID frágil.
+  - `MessageQueueManager` y `RandomIntervalGenerator`.
+- **`:core:autoresponder`**: **Motor 2 (Autorespuestas por Notificación)**:
+  - `AutoReplyEngine`, `RuleMatcher`, `ScheduleEvaluator`, `ContactFilterEvaluator` y protección anti-bucles y límites por conversación mediante `RemoteInput` oficial de Android.
+- **`:core:data`**: Persistencia local con migraciones verificadas y respaldo previo:
+  - `AppDatabase` (`version = 6`, migraciones secuenciales `MIGRATION_1_2` hasta `MIGRATION_5_6` sin borrado destructivo, esquemas JSON exportados en `core/data/schemas/`) + `DatabaseBackupManager` (respaldos SQLite automáticos pre-migración).
+  - `LocalBackupManager`: Exportación/importación local cifrada con **AES-256-GCM**, derivación `PBKDF2WithHmacSHA256` (65,536 iteraciones) y verificación `SHA-256`.
+  - `TemplateBundleCodec`: Exportación/importación portable de plantillas de biblioteca (límite 2 MB, cero contactos ni teléfonos incluidos).
+  - Repositorios Room (`HistoryRepository`, `SavedConfigRepository`, `ScheduledTaskRepository`, `AutoReplyRepository`) y DataStore (`SettingsRepository`, `AutoReplySettingsRepository`, `ContactsRepository`).
+- **`:core:updater`**: Comparador semántico, parser de GitHub Releases, validación estricta de URLs HTTPS de GitHub, verificador criptográfico `SHA-256` y validador de compatibilidad (`applicationId`, `versionCode`, firma permanente obligatoria y `minSdk`).
+- **`:app`**: UI Jetpack Compose Material 3 con **Tema Oscuro OLED / Claro / Sistema**, **Panel de Inicio**, **Programador Visual** (`DatePicker`, `TimePicker`, frecuencias y finalización), **Centro de Notificaciones de Programaciones Activas**, **Centro de Actividad**, **Biblioteca Inteligente**, **Editor Avanzado con selección múltiple**, **Centro de Seguridad y Privacidad** (con `AndroidKeystoreVault`), **Diagnóstico**, **Analíticas Locales Privadas** y **Actualizador integrado**.
 
----
-
-## Seguridad, control y privacidad
-
-- **Activación manual obligatoria**: El usuario debe habilitar el servicio de accesibilidad manualmente en Ajustes de Android.
-- **Alcance limitado**: El servicio declara `android:packageNames="com.whatsapp,com.whatsapp.w4b"` para inspeccionar exclusivamente WhatsApp / WhatsApp Business durante la ejecución.
-- **Sin automatizaciones ocultas**: Siempre se abre WhatsApp de forma visible y se muestra una notificación persistente con botón **DETENER** mientras la tarea está activa.
-- **Doble confirmación de destinatario**: El usuario confirma el contacto elegido en el selector y vuelve a autorizar antes de iniciar; además, antes de escribir cada mensaje el motor verifica la cabecera del chat abierto.
-- **Detención inmediata ante bloqueos o cambios**: Si la cabecera no coincide, la interfaz cambia de forma inesperada o aparece un diálogo de error, PIN o CAPTCHA, la automatización se detiene al instante (nunca intenta evadir controles ni CAPTCHAs).
-- **Límites prudentes**: Intervalos entre `5s` y `300s` (recomendado `15s–35s`) y tope máximo de `50` mensajes por ejecución para evitar envíos masivos.
+Consulta los detalles técnicos completos en [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) y el historial de versiones en [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
 ---
 
-## Requisitos de compatibilidad
+## Seguridad, privacidad y DevSecOps
 
-- **Android 9.0 (API 28) o superior** (`minSdk = 28`, `targetSdk = 35`).
-- WhatsApp (`com.whatsapp`) o WhatsApp Business (`com.whatsapp.w4b`) instalado y con sesión iniciada por el propio usuario.
+- **Procesamiento 100% local**: No existen servidores analíticos, telemetría ni rastreadores. Todos los datos permanecen en Room y DataStore locales.
+- **Bóveda criptográfica local**: `AndroidKeystoreVault` genera y verifica claves `AES-256-GCM` no exportables respaldadas por hardware/TEE.
+- **Respaldo seguro**:
+  - Copias manuales cifradas con `AES-256-GCM` + `PBKDF2-HMAC-SHA256` + verificación `SHA-256`.
+  - Respaldo automático Android restringido mediante `disableIfNoEncryptionCapabilities="true"`.
+- **Alcance mínimo**: El Servicio de Accesibilidad se declara exclusivamente para `com.whatsapp` y `com.whatsapp.w4b`, exige activación manual, verificación estricta de destinatario y notificación persistente con botón **DETENER**.
+- **Sin evasión ni credenciales**: Nunca solicita contraseñas/sesiones de WhatsApp ni intenta evadir CAPTCHAs, bloqueos o verificaciones.
+- **Seguridad del repositorio**: Workflow continuo `.github/workflows/security.yml` (Gitleaks, verificación de archivos prohibidos, Android Lint y CodeQL `java-kotlin`), Dependabot semanal y hook local `.githooks/pre-commit`. Consulta [SECURITY.md](SECURITY.md).
 
 ---
 
-## Compilación local y generación del APK
+## Identidad permanente y actualizaciones sin perder datos
 
-Requisitos: **JDK 17** y **Android SDK (API 36)** (`compileSdk = 36`, `targetSdk = 35`, `minSdk = 28`).
+- **`applicationId`**: `com.whatsapprepeater.android` (fijo entre todas las versiones).
+- **`namespace`**: `com.whatsapprepeater.app`.
+- **Certificado permanente SHA-256**: `0e582e7eec8712c582f7a48f1ad1d473e2ba149f4ed997914574a4daeb13c109`.
+- **Actualizador integrado**: Consulta GitHub Releases bajo demanda únicamente por HTTPS, valida SHA-256 del APK, `applicationId`, `versionCode` creciente y coincidencia exacta de firma permanente antes de invocar el instalador oficial de Android, conservando plantillas, programaciones, historial y preferencias.
+- **Publicación automática**: Cada push a `main` validado en CI compila y publica automáticamente una **Pre-release** firmada en GitHub Releases con `versionCode` creciente (`v1.0.1-build.N`). Los tags estables (`vX.Y.Z`) se crean únicamente bajo decisión explícita. Consulta [docs/RELEASE_AND_SIGNING.md](docs/RELEASE_AND_SIGNING.md).
+
+---
+
+## Requisitos y compilación local
+
+- **Android 9.0 (API 28) o superior** (`minSdk = 28`, `targetSdk = 35`, `compileSdk = 36`).
+- **JDK 17** y **Android SDK 36**.
+- WhatsApp (`com.whatsapp`) o WhatsApp Business (`com.whatsapp.w4b`) instalado y con sesión iniciada por el usuario.
 
 ```bash
-# Ejecutar pruebas unitarias de todos los módulos
+# Ejecutar todas las pruebas unitarias (JVM)
 ./gradlew test
 
-# Compilar APK de depuración instalable
-./gradlew assembleDebug
-```
+# Ejecutar Android Lint
+./gradlew lintDebug
 
-El APK generado se ubicará en:
+# Compilar APK Debug y compilar pruebas instrumentadas Compose
+./gradlew assembleDebug compileDebugAndroidTestKotlin
 
-```text
-app/build/outputs/apk/debug/app-debug.apk
-```
-
----
-
-## Instalación del APK en el teléfono
-
-### Opción A: Instalación directa en el teléfono
-1. Descarga `WhatsAppRepeater-debug.apk` (desde **GitHub Releases** o desde `app/build/outputs/apk/debug/app-debug.apk`).
-2. Ábrelo desde el gestor de archivos de tu teléfono Android.
-3. Si Android lo solicita, habilita *"Instalar aplicaciones de orígenes desconocidos"* para el navegador o gestor de archivos.
-4. Confirma la instalación.
-
-### Opción B: Instalación mediante ADB desde PC
-1. Activa la **Depuración USB** en *Opciones de desarrollador* de tu teléfono y conéctalo por USB.
-2. Ejecuta:
-```bash
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+# Verificar ausencia de secretos localmente (Windows PowerShell)
+./scripts/secret-scan.ps1
 ```
 
 ---
 
-## Cómo activar el Servicio de Accesibilidad
+## Recomendaciones para POCO / Xiaomi / HyperOS
 
-> **Nota para Android 13, 14 y 15**: Si instalaste el APK manualmente fuera de Google Play, Android puede restringir temporalmente los ajustes de accesibilidad ("Configuración restringida"). Para habilitarlo: ve a **Ajustes > Aplicaciones > WhatsApp Repeater > menú (⋮) > Permitir ajustes restringidos**.
-
-1. Abre **WhatsApp Repeater**.
-2. En la pantalla de inicio, pulsa **"Activar permisos"** y luego **"Ir a Accesibilidad"**.
-3. Entra en **Aplicaciones instaladas** / **Servicios descargados**.
-4. Selecciona **"WhatsApp Repeater — Automatización"** y activa el interruptor.
-5. Vuelve a la app y comprueba que la insignia indique **"Servicio activo"**.
+1. **Ajustes restringidos (Android 13–15)**: Si instalaste el APK manualmente, abre **Ajustes > Aplicaciones > WhatsApp Repeater > menú (⋮) > Permitir ajustes restringidos** antes de activar Accesibilidad o Acceso a Notificaciones.
+2. **Batería y segundo plano**: Configura **Ahorro de batería → Sin restricciones**, activa **Inicio automático** y fija la app con el candado en la vista de aplicaciones recientes para evitar que HyperOS desconecte Accesibilidad o retrase alarmas del Programador.
+3. **Alarmas exactas y notificaciones**: Concede **Alarmas y recordatorios** y **Notificaciones** para recibir la cuenta regresiva en vivo y los controles rápidos (Pausar / Reanudar / Cancelar).
 
 ---
 
-## Guía rápida de uso
+## Limitaciones conocidas de Android y WhatsApp
 
-1. **Inicio**: Verifica que el servicio aparezca activo y pulsa **"Crear automatización"**.
-2. **Seleccionar contacto**: Concede el permiso de contactos (solo se solicita en este paso), busca por nombre o número, elige **un único destinatario** y confírmalo.
-3. **Configurar mensajes**:
-   - **Modalidad 1 (Mensajes múltiples)**: Agrega, edita, elimina o reordena mensajes en una lista numerada; cada uno se enviará una sola vez.
-   - **Modalidad 2 (Repetir mensaje)**: Escribe un mensaje, ajusta la cantidad de repeticiones dentro del límite configurado y revisa la vista previa.
-4. **Configurar intervalos**: Define el intervalo mínimo y máximo en segundos (validando que mínimo ≤ máximo) y elige si deseas guardar los valores por defecto o usar WhatsApp Business.
-5. **Ejecución**: Revisa el resumen, marca la casilla de autorización explícita, pulsa **INICIAR** y confirma el diálogo final. Podrás **PAUSAR**, **REANUDAR** o **DETENER** en cualquier momento desde la app o desde la notificación.
-
----
-
-## Limitaciones conocidas por restricciones de Android / WhatsApp
-
-- **Cambios de interfaz en WhatsApp**: Aunque `WhatsAppNavigator` utiliza heurísticas combinadas (tipo de nodo, posición en pantalla, descripciones de accesibilidad en español/inglés y texto de cabecera) en lugar de depender de un único ID, una actualización mayor de WhatsApp podría modificar su árbol de accesibilidad. Por seguridad, si no reconoce el campo de texto, el botón de envío o la cabecera del destinatario, la ejecución se detiene automáticamente.
-- **Pantalla apagada o bloqueo**: Android impide interactuar con la UI cuando el teléfono está bloqueado; mantén la pantalla desbloqueada durante la ejecución.
-- **Alternativa segura ante números no guardados o no reconocidos**: La aplicación abre el enlace oficial `https://api.whatsapp.com/send?phone=...` y, si llega a la pantalla principal de chats, utiliza el buscador interno de WhatsApp antes de verificar la cabecera. Si WhatsApp indica que el número no existe o solicita verificación/CAPTCHA, la automatización se detiene sin intentar omitir la restricción.
-
----
-
-## Actualizaciones sin perder datos y Publicación en GitHub Releases
-
-- **Identidad fija**: `applicationId = "com.whatsapprepeater.android"` (no cambia nunca entre versiones).
-- **Versionado**: Controlado desde [version.properties](version.properties) (`VERSION_CODE` incremental + `VERSION_NAME` semántico).
-- **Actualizador integrado**: Desde la pantalla **Actualizaciones** puedes consultar GitHub Releases, leer las novedades, descargar el APK, verificar automáticamente su `SHA-256`, validar firma y `versionCode`, y lanzar el instalador oficial de Android conservando todos tus datos (mensajes, listas, contactos, intervalos, historial y preferencias).
-- **Firma de producción y guía completa**: Consulta [docs/RELEASE_AND_SIGNING.md](docs/RELEASE_AND_SIGNING.md) para configurar tu keystore en GitHub Secrets y publicar nuevas versiones con `git tag vX.Y.Z && git push origin vX.Y.Z`.
-
+- **Pantalla bloqueada**: Android impide automatizar la UI mientras el dispositivo está bloqueado con PIN/huella; si una programación dispara con pantalla bloqueada, el sistema muestra una notificación de intervención con botón de ejecución inmediata.
+- **Cambios de UI en WhatsApp**: Si una actualización de WhatsApp altera significativamente los nodos de accesibilidad o la cabecera no coincide con el destinatario configurado, Motor 1 se detiene inmediatamente por seguridad y muestra un diálogo/notificación de intervención en lugar de enviar al chat equivocado.
+- **Validación en dispositivo físico**: Todas las pruebas unitarias, migraciones Room, Lint, CodeQL y firma Release se validan automáticamente en CI; la interacción en vivo con WhatsApp sobre hardware real (p. ej. POCO X6 Pro 5G / HyperOS) debe verificarse siguiendo [docs/TESTING_PROTOCOL_AND_RELEASE_CHECKLIST.md](docs/TESTING_PROTOCOL_AND_RELEASE_CHECKLIST.md).

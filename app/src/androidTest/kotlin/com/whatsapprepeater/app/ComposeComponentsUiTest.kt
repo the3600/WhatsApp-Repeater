@@ -19,6 +19,8 @@ import com.whatsapprepeater.app.ui.scheduler.SchedulerScreen
 import com.whatsapprepeater.app.ui.scheduler.SchedulerViewModel
 import com.whatsapprepeater.app.ui.scheduler.VisualMaterialDatePickerModal
 import com.whatsapprepeater.app.ui.scheduler.VisualMaterialTimePickerModal
+import com.whatsapprepeater.app.ui.security.SecurityPrivacyScreen
+import com.whatsapprepeater.app.ui.security.SecurityPrivacyViewModel
 import com.whatsapprepeater.app.ui.autoreply.AutoReplyAwayScreen
 import com.whatsapprepeater.app.ui.autoreply.AutoReplyContactFiltersScreen
 import com.whatsapprepeater.app.ui.autoreply.AutoReplyDashboardScreen
@@ -44,6 +46,7 @@ import com.whatsapprepeater.core.model.AutoReplyRule
 import com.whatsapprepeater.core.model.AutoReplySettings
 import com.whatsapprepeater.core.model.AutomationState
 import com.whatsapprepeater.core.model.ContactInfo
+import com.whatsapprepeater.core.model.ThemeMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
@@ -442,5 +445,24 @@ class ComposeComponentsUiTest {
     }
     composeRule.onNodeWithText("Centro de Actividad").assertIsDisplayed()
     composeRule.onNodeWithText("Programaciones").assertIsDisplayed()
+  }
+
+  @Test
+  fun securityPrivacyScreen_rendersLiveAuditAndLightThemeWithoutCrash() {
+    val context = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext
+    val securityVm = SecurityPrivacyViewModel(AppContainer(context))
+    composeRule.setContent {
+      WhatsAppRepeaterTheme(themeMode = ThemeMode.LIGHT) {
+        SecurityPrivacyScreen(
+          viewModel = securityVm,
+          onBack = {},
+          onOpenSettingsBackup = {},
+          onOpenDiagnostics = {},
+          onOpenPermissions = {},
+        )
+      }
+    }
+    composeRule.onNodeWithText("Centro de Seguridad y Privacidad").assertIsDisplayed()
+    composeRule.onNodeWithText("Integridad criptográfica local").assertIsDisplayed()
   }
 }

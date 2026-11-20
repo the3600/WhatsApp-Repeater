@@ -22,6 +22,7 @@ import com.whatsapprepeater.core.model.DiagnosticStatus
 import com.whatsapprepeater.core.model.DynamicVariablesEngine
 import com.whatsapprepeater.core.model.ExecutionFinalStatus
 import com.whatsapprepeater.core.model.LocalAnalyticsSummary
+import com.whatsapprepeater.core.model.LocalIntelligenceEngine
 import com.whatsapprepeater.core.model.ScheduledTaskStatus
 import com.whatsapprepeater.core.model.TemplateUsageStat
 import java.security.MessageDigest
@@ -71,6 +72,7 @@ class InsightsViewModel(
         it.status != AutoReplyLogStatus.SENT && it.status != AutoReplyLogStatus.FAILED_SEND
       },
       totalMotor2Failed = motor2History.count { it.status == AutoReplyLogStatus.FAILED_SEND },
+      totalSchedulesCreated = schedules.size,
       pendingSchedules = schedules.count { it.enabled && it.status == ScheduledTaskStatus.PENDING },
       completedSchedules = schedules.count { it.status == ScheduledTaskStatus.COMPLETED },
       missedOrFailedSchedules = schedules.count {
@@ -81,6 +83,11 @@ class InsightsViewModel(
         .sortedByDescending { it.useCount }
         .take(5)
         .map { TemplateUsageStat(title = it.title, category = it.category, useCount = it.useCount) },
+      frequentErrors = LocalIntelligenceEngine.groupFrequentErrors(
+        motor1History = motor1History,
+        motor2History = motor2History,
+        schedules = schedules,
+      ),
     )
   }.stateIn(
     scope = viewModelScope,

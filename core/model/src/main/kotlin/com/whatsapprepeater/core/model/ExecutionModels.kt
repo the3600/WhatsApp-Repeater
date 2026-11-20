@@ -115,6 +115,12 @@ data class ExecutionRecord(
     get() = (scheduledCount - confirmedCount).coerceAtLeast(0)
 }
 
+enum class ThemeMode(val label: String) {
+  DARK("Oscuro OLED"),
+  LIGHT("Claro"),
+  SYSTEM("Sistema"),
+}
+
 /**
  * Preferencias de usuario persistidas con DataStore.
  */
@@ -126,6 +132,7 @@ data class AppSettings(
   val hapticFeedbackEnabled: Boolean = true,
   val keepScreenOnDuringAutomation: Boolean = true,
   val vacationPauseEnabled: Boolean = false,
+  val themeMode: ThemeMode = ThemeMode.DARK,
   val githubRepoOwner: String = "the3600",
   val githubRepoName: String = "WhatsApp-Repeater",
 )

@@ -35,6 +35,11 @@ data class TemplateUsageStat(
   val useCount: Int,
 )
 
+data class FrequentErrorStat(
+  val reason: String,
+  val count: Int,
+)
+
 /**
  * Estadísticas estrictamente locales y agregadas; nunca almacena contenido de mensajes.
  */
@@ -49,15 +54,39 @@ data class LocalAnalyticsSummary(
   val totalMotor2Sent: Int = 0,
   val totalMotor2Skipped: Int = 0,
   val totalMotor2Failed: Int = 0,
+  val totalSchedulesCreated: Int = 0,
   val pendingSchedules: Int = 0,
   val completedSchedules: Int = 0,
   val missedOrFailedSchedules: Int = 0,
   val topTemplates: List<TemplateUsageStat> = emptyList(),
+  val frequentErrors: List<FrequentErrorStat> = emptyList(),
 ) {
   val deliveryRatePercent: Int
     get() = if (totalMessagesScheduled <= 0) {
       100
     } else {
       ((totalMessagesConfirmed * 100) / totalMessagesScheduled).coerceIn(0, 100)
+    }
+
+  /**
+   * Estimación orientativa estrictamente local del tiempo manual ahorrado:
+   * ~12 s por mensaje automatizado confirmado en Motor 1 y ~15 s por autorespuesta enviada en Motor 2.
+   */
+  val estimatedSecondsSaved: Long
+    get() = (totalMessagesConfirmed.toLong() * 12L) + (totalMotor2Sent.toLong() * 15L)
+
+  val estimatedTimeSavedFormatted: String
+    get() {
+      val totalSec = estimatedSecondsSaved.coerceAtLeast(0L)
+      if (totalSec == 0L) return "0 min"
+      val hours = totalSec / 3600L
+      val minutes = (totalSec % 3600L) / 60L
+      val seconds = totalSec % 60L
+      return when {
+        hours > 0L -> "${hours} h ${minutes} min"
+        minutes > 0L && seconds > 0L -> "${minutes} min ${seconds} s"
+        minutes > 0L -> "${minutes} min"
+        else -> "${seconds} s"
+      }
     }
 }

@@ -87,6 +87,7 @@ import com.whatsapprepeater.app.ui.theme.TextSecondary
 import com.whatsapprepeater.app.ui.theme.WarningAmber
 import com.whatsapprepeater.app.ui.theme.WhatsAppGreen
 import com.whatsapprepeater.app.ui.theme.WhatsAppGreenContainer
+import com.whatsapprepeater.core.model.ThemeMode
 
 /**
  * Pantalla 13 (Stitch 13._ajustes_y_respaldo):
@@ -100,6 +101,7 @@ fun SettingsBackupScreen(
   onSelectBottomTab: (BottomTab) -> Unit,
   onOpenDiagnostics: () -> Unit = {},
   onOpenAnalytics: () -> Unit = {},
+  onOpenSecurityCenter: () -> Unit = {},
 ) {
   val context = LocalContext.current
   val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -180,10 +182,41 @@ fun SettingsBackupScreen(
           PreferenceInfoRow(
             icon = Icons.Rounded.DarkMode,
             title = "Tema de la aplicación",
-            subtitle = "Modo oscuro OLED activo",
-            trailing = { StatusBadge("Activo", WhatsAppGreenContainer, WhatsAppGreen) },
+            subtitle = "Actual: ${state.settings.themeMode.label}",
+            trailing = { StatusBadge(state.settings.themeMode.label, WhatsAppGreenContainer, WhatsAppGreen) },
           )
-          Spacer(modifier = Modifier.height(12.dp))
+          Spacer(modifier = Modifier.height(10.dp))
+          Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            ThemeMode.entries.forEach { mode ->
+              val selected = state.settings.themeMode == mode
+              Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = if (selected) WhatsAppGreenContainer else CardSurfaceElevated,
+                border = BorderStroke(1.dp, if (selected) WhatsAppGreen else OutlineSubtle),
+                modifier = Modifier
+                  .weight(1f)
+                  .clip(RoundedCornerShape(12.dp))
+                  .clickable { viewModel.setThemeMode(mode) },
+              ) {
+                Box(
+                  contentAlignment = Alignment.Center,
+                  modifier = Modifier.padding(vertical = 10.dp, horizontal = 6.dp),
+                ) {
+                  Text(
+                    text = mode.label,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (selected) WhatsAppGreen else TextPrimary,
+                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                    maxLines = 1,
+                  )
+                }
+              }
+            }
+          }
+          Spacer(modifier = Modifier.height(14.dp))
           PreferenceSwitchRow(
             icon = Icons.Rounded.Vibration,
             title = "Vibración háptica",
@@ -345,6 +378,12 @@ fun SettingsBackupScreen(
             )
           }
           Spacer(modifier = Modifier.height(12.dp))
+          ActionRowItem(
+            icon = Icons.Rounded.Shield,
+            title = "Centro de Seguridad y Privacidad",
+            tint = WhatsAppGreen,
+            onClick = onOpenSecurityCenter,
+          )
           ActionRowItem(
             icon = Icons.Rounded.AccessibilityNew,
             title = "Permisos y Servicio de Accesibilidad",

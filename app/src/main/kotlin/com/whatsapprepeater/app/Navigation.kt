@@ -47,6 +47,8 @@ import com.whatsapprepeater.app.ui.messages.RepetitionConfigScreen
 import com.whatsapprepeater.app.ui.permissions.PermissionsAccessibilityScreen
 import com.whatsapprepeater.app.ui.scheduler.SchedulerScreen
 import com.whatsapprepeater.app.ui.scheduler.SchedulerViewModel
+import com.whatsapprepeater.app.ui.security.SecurityPrivacyScreen
+import com.whatsapprepeater.app.ui.security.SecurityPrivacyViewModel
 import com.whatsapprepeater.app.ui.settings.SettingsBackupScreen
 import com.whatsapprepeater.app.ui.settings.SettingsBackupViewModel
 import com.whatsapprepeater.app.ui.splash.SplashScreen
@@ -157,6 +159,14 @@ fun MainNavigation(container: AppContainer) {
           onOpenDiagnostics = { backStack.add(DiagnosticsRoute) },
           onOpenAnalytics = { backStack.add(AnalyticsRoute) },
           onOpenUpdates = { backStack.add(UpdatesRoute) },
+          onOpenSecurityCenter = { backStack.add(SecurityPrivacyRoute) },
+          onOpenEditor = {
+            if (container.draft.value.isMultipleMode) {
+              backStack.add(MessageEditorRoute)
+            } else {
+              backStack.add(RepetitionConfigRoute)
+            }
+          },
         )
       }
 
@@ -265,6 +275,7 @@ fun MainNavigation(container: AppContainer) {
           onSelectBottomTab = ::navigateByBottomTab,
           onOpenDiagnostics = { backStack.add(DiagnosticsRoute) },
           onOpenAnalytics = { backStack.add(AnalyticsRoute) },
+          onOpenSecurityCenter = { backStack.add(SecurityPrivacyRoute) },
         )
       }
 
@@ -418,6 +429,16 @@ fun MainNavigation(container: AppContainer) {
           onOpenExecutionDetail = { id -> backStack.add(HistoryDetailRoute(id)) },
           onOpenScheduler = { backStack.add(SchedulerRoute) },
           onOpenDiagnostics = { backStack.add(DiagnosticsRoute) },
+        )
+      }
+      entry<SecurityPrivacyRoute> {
+        val vm: SecurityPrivacyViewModel = viewModel(factory = SecurityPrivacyViewModel.factory(container))
+        SecurityPrivacyScreen(
+          viewModel = vm,
+          onBack = { backStack.removeLastOrNull() },
+          onOpenSettingsBackup = { resetToRoot(SettingsRoute) },
+          onOpenDiagnostics = { backStack.add(DiagnosticsRoute) },
+          onOpenPermissions = { backStack.add(PermissionsRoute) },
         )
       }
     },
