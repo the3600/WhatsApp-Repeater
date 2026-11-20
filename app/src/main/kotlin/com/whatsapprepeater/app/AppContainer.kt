@@ -49,6 +49,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.updateAndGet
@@ -211,6 +212,9 @@ class AppContainer(context: Context) {
   private val _pendingActiveAutomationLaunch = MutableStateFlow(false)
   val pendingActiveAutomationLaunch: StateFlow<Boolean> = _pendingActiveAutomationLaunch.asStateFlow()
 
+  private val _pendingOpenScheduler = MutableStateFlow(false)
+  val pendingOpenScheduler: StateFlow<Boolean> = _pendingOpenScheduler.asStateFlow()
+
   @Volatile
   private var activeScheduledTaskId: Long? = null
 
@@ -248,6 +252,23 @@ class AppContainer(context: Context) {
     appScope.launch {
       automationEngine.state.collect { state ->
         notificationHelper.syncWithState(state)
+      }
+    }
+
+    appScope.launch {
+      try {
+        combine(
+          scheduledTaskRepository.observeTasks(),
+          settingsRepository.settings,
+        ) { tasks, settings ->
+          tasks to settings.vacationPauseEnabled
+        }.collect { (tasks, vacationPaused) ->
+          schedulerAlarmHelper.syncActiveScheduleNotification(tasks, vacationPaused)
+        }
+      } catch (c: CancellationException) {
+        throw c
+      } catch (_: Exception) {
+        // Evita cierre ante errores transitorios de lectura en segundo plano.
       }
     }
   }
@@ -296,6 +317,14 @@ class AppContainer(context: Context) {
 
   fun clearPendingActiveAutomationLaunch() {
     _pendingActiveAutomationLaunch.value = false
+  }
+
+  fun requestOpenScheduler() {
+    _pendingOpenScheduler.value = true
+  }
+
+  fun clearPendingOpenScheduler() {
+    _pendingOpenScheduler.value = false
   }
 
   fun loadTemplateIntoDraft(template: SavedMessageList) {

@@ -30,3 +30,4 @@ import kotlinx.serialization.Serializable
 @Serializable data object SchedulerRoute : NavKey
 @Serializable data object DiagnosticsRoute : NavKey
 @Serializable data object AnalyticsRoute : NavKey
+@Serializable data object ActivityCenterRoute : NavKey

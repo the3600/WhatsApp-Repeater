@@ -10,6 +10,8 @@ import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
+import com.whatsapprepeater.app.ui.activity.ActivityCenterScreen
+import com.whatsapprepeater.app.ui.activity.ActivityCenterViewModel
 import com.whatsapprepeater.app.ui.automation.AutomationScreen
 import com.whatsapprepeater.app.ui.automation.AutomationViewModel
 import com.whatsapprepeater.app.ui.automation.ConfirmationScreen
@@ -60,6 +62,7 @@ fun MainNavigation(container: AppContainer) {
   )
   val pendingScheduledId by container.pendingScheduleLaunch.collectAsStateWithLifecycle()
   val pendingActiveAutomation by container.pendingActiveAutomationLaunch.collectAsStateWithLifecycle()
+  val pendingOpenScheduler by container.pendingOpenScheduler.collectAsStateWithLifecycle()
 
   fun resetToRoot(root: NavKey) {
     if (backStack.size == 1 && backStack.firstOrNull() == root) return
@@ -85,6 +88,13 @@ fun MainNavigation(container: AppContainer) {
     container.clearPendingActiveAutomationLaunch()
     resetToRoot(HomeRoute)
     backStack.add(AutomationRoute)
+  }
+
+  LaunchedEffect(pendingOpenScheduler) {
+    if (!pendingOpenScheduler) return@LaunchedEffect
+    container.clearPendingOpenScheduler()
+    resetToRoot(HomeRoute)
+    backStack.add(SchedulerRoute)
   }
 
   fun navigateBackToOrAdd(target: NavKey) {
@@ -143,6 +153,7 @@ fun MainNavigation(container: AppContainer) {
           onSelectBottomTab = ::navigateByBottomTab,
           onOpenLibrary = { backStack.add(SmartLibraryRoute) },
           onOpenScheduler = { backStack.add(SchedulerRoute) },
+          onOpenActivityCenter = { backStack.add(ActivityCenterRoute) },
           onOpenDiagnostics = { backStack.add(DiagnosticsRoute) },
           onOpenAnalytics = { backStack.add(AnalyticsRoute) },
           onOpenUpdates = { backStack.add(UpdatesRoute) },
@@ -396,6 +407,17 @@ fun MainNavigation(container: AppContainer) {
         AnalyticsScreen(
           viewModel = vm,
           onBack = { backStack.removeLastOrNull() },
+        )
+      }
+      entry<ActivityCenterRoute> {
+        val context = LocalContext.current
+        val vm: ActivityCenterViewModel = viewModel(factory = ActivityCenterViewModel.factory(container, context))
+        ActivityCenterScreen(
+          viewModel = vm,
+          onBack = { backStack.removeLastOrNull() },
+          onOpenExecutionDetail = { id -> backStack.add(HistoryDetailRoute(id)) },
+          onOpenScheduler = { backStack.add(SchedulerRoute) },
+          onOpenDiagnostics = { backStack.add(DiagnosticsRoute) },
         )
       }
     },

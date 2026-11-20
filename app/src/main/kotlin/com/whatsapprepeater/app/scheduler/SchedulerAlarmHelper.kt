@@ -1,5 +1,6 @@
 package com.whatsapprepeater.app.scheduler
 
+import android.Manifest
 import android.app.AlarmManager
 import android.app.KeyguardManager
 import android.app.NotificationChannel
@@ -7,14 +8,21 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import com.whatsapprepeater.app.MainActivity
 import com.whatsapprepeater.app.R
+import com.whatsapprepeater.core.model.ScheduleCountdownFormatter
+import com.whatsapprepeater.core.model.ScheduleNotificationMode
 import com.whatsapprepeater.core.model.ScheduledTask
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 data class AutoExecuteReadiness(
   val canExecute: Boolean,
@@ -22,9 +30,11 @@ data class AutoExecuteReadiness(
 )
 
 /**
- * Programa alarmas de [ScheduledTask] (alerta previa, disparo real y aviso de vencidos)
- * usando alarmas exactas cuando están autorizadas y fallback seguro con `setAndAllowWhileIdle`,
- * verificando honestamente accesibilidad, pantalla desbloqueada y restricciones de Android/HyperOS.
+ * Gestiona alarmas exactas/compatibles y el Centro de Notificaciones del Programador:
+ * - Notificación persistente consolidada (ID único, sin duplicados) con cuenta regresiva
+ *   nativa de Android (`setUsesChronometer` + `setChronometerCountDown`, sin consumo extra de batería)
+ *   y acciones directas Pausar / Reanudar / Cancelar / Abrir app.
+ * - Notificaciones de alta prioridad para avisos previos, inicio de ejecución e intervención requerida.
  */
 class SchedulerAlarmHelper(
   private val context: Context,
@@ -36,14 +46,29 @@ class SchedulerAlarmHelper(
     context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
 
   fun ensureChannel() {
-    val channel = NotificationChannel(
+    val alertsChannel = NotificationChannel(
       CHANNEL_ID,
-      "Programaciones y Envíos",
+      "Alertas de programación y ejecución",
       NotificationManager.IMPORTANCE_HIGH,
     ).apply {
       description = "Alertas previas, ejecución programada y avisos cuando se requiere intervención"
     }
-    notificationManager.createNotificationChannel(channel)
+    val statusChannel = NotificationChannel(
+      ACTIVE_STATUS_CHANNEL_ID,
+      "Programaciones activas (cuenta regresiva)",
+      NotificationManager.IMPORTANCE_LOW,
+    ).apply {
+      description = "Muestra la próxima programación activa o pausada con cuenta regresiva y acciones rápidas"
+      setShowBadge(false)
+    }
+    notificationManager.createNotificationChannel(alertsChannel)
+    notificationManager.createNotificationChannel(statusChannel)
+  }
+
+  fun hasNotificationPermission(): Boolean {
+    return Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+      ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+      PackageManager.PERMISSION_GRANTED
   }
 
   fun canScheduleExactAlarms(): Boolean {
@@ -94,6 +119,124 @@ class SchedulerAlarmHelper(
       )
     }
     return AutoExecuteReadiness(canExecute = true)
+  }
+
+  /**
+   * Sincroniza la notificación persistente consolidada de programaciones activas/pausadas/fallidas.
+   * Utiliza un único ID fijo para evitar notificaciones duplicadas y usa el cronómetro nativo
+   * en cuenta regresiva de Android (eficiente en batería, sin hilos ni servicios permanentes).
+   */
+  fun syncActiveScheduleNotification(
+    tasks: List<ScheduledTask>,
+    vacationPauseEnabled: Boolean,
+  ) {
+    val now = System.currentTimeMillis()
+    val state = ScheduleCountdownFormatter.deriveNotificationState(
+      tasks = tasks,
+      vacationPauseEnabled = vacationPauseEnabled,
+      nowMillis = now,
+    )
+    val task = state.primaryTask
+    if (state.mode == ScheduleNotificationMode.NONE || task == null) {
+      notificationManager.cancel(ACTIVE_SCHEDULE_NOTIFICATION_ID)
+      return
+    }
+    if (!hasNotificationPermission()) return
+
+    ensureChannel()
+    val dateFmt = SimpleDateFormat("dd/MM • h:mm a", Locale.forLanguageTag("es")).format(Date(task.triggerAtMillis))
+    val typeLabel = if (task.isMultipleMode) {
+      "Secuencia (${task.totalMessagesCount} mensajes)"
+    } else {
+      "Mensaje único (${task.repeatCount}x)"
+    }
+    val openSchedulerPending = buildOpenSchedulerPendingIntent()
+
+    val builder = NotificationCompat.Builder(context, ACTIVE_STATUS_CHANNEL_ID)
+      .setSmallIcon(R.drawable.ic_launcher_foreground)
+      .setOnlyAlertOnce(true)
+      .setContentIntent(openSchedulerPending)
+      .setCategory(NotificationCompat.CATEGORY_STATUS)
+      .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+
+    when (state.mode) {
+      ScheduleNotificationMode.ACTIVE -> {
+        val remainingText = ScheduleCountdownFormatter.formatRemaining(state.remainingMillis)
+        val extraSuffix = if (state.activeCount > 1) " (+${state.activeCount - 1} más)" else ""
+        val title = "Programación activa: ${task.title}"
+        val shortLine = "${task.contactName} • Próximo: $dateFmt • Faltan $remainingText"
+        val bigText = buildString {
+          append("Destinatario: ${task.contactName} (${task.contactPhone})\n")
+          append("Próximo envío: $dateFmt\n")
+          append("Faltan: $remainingText\n")
+          append("Tipo: $typeLabel • ${task.recurrence.label}\n")
+          append("Pendientes: ${task.totalMessagesCount} msg$extraSuffix")
+        }
+
+        builder
+          .setContentTitle(title)
+          .setSubText("Programación activa$extraSuffix")
+          .setContentText(shortLine)
+          .setStyle(NotificationCompat.BigTextStyle().bigText(bigText))
+          .setOngoing(true)
+          .setWhen(task.triggerAtMillis)
+          .setShowWhen(true)
+          .setUsesChronometer(task.triggerAtMillis > now)
+          .setChronometerCountDown(true)
+          .addAction(0, "Pausar", buildScheduleActionPendingIntent(task.id, ScheduleNotificationActionReceiver.ACTION_PAUSE_SCHEDULE, 1))
+          .addAction(0, "Cancelar", buildScheduleActionPendingIntent(task.id, ScheduleNotificationActionReceiver.ACTION_CANCEL_SCHEDULE, 2))
+          .addAction(0, "Abrir", openSchedulerPending)
+      }
+
+      ScheduleNotificationMode.PAUSED, ScheduleNotificationMode.VACATION_PAUSED -> {
+        val pausedTitle = if (state.mode == ScheduleNotificationMode.VACATION_PAUSED) {
+          "Programación pausada (Vacaciones)"
+        } else {
+          "Programación pausada: ${task.title}"
+        }
+        val bigText = buildString {
+          append("Destinatario: ${task.contactName} (${task.contactPhone})\n")
+          append("Horario original: $dateFmt\n")
+          append("Estado: ${if (state.mode == ScheduleNotificationMode.VACATION_PAUSED) "Pausa por vacaciones" else "Pausada por el usuario"}\n")
+          append("Tipo: $typeLabel")
+        }
+        builder
+          .setContentTitle(pausedTitle)
+          .setSubText("Pausada")
+          .setContentText("${task.contactName} • Pausada ($dateFmt)")
+          .setStyle(NotificationCompat.BigTextStyle().bigText(bigText))
+          .setOngoing(false)
+          .setUsesChronometer(false)
+          .addAction(0, "Reanudar", buildScheduleActionPendingIntent(task.id, ScheduleNotificationActionReceiver.ACTION_RESUME_SCHEDULE, 3))
+          .addAction(0, "Cancelar", buildScheduleActionPendingIntent(task.id, ScheduleNotificationActionReceiver.ACTION_CANCEL_SCHEDULE, 4))
+          .addAction(0, "Abrir", openSchedulerPending)
+      }
+
+      ScheduleNotificationMode.FAILED -> {
+        val reason = task.lastFailureReason.ifBlank { "No pudo ejecutarse automáticamente." }
+        val bigText = buildString {
+          append("Destinatario: ${task.contactName} (${task.contactPhone})\n")
+          append("Estado: Fallida / Intervención requerida\n")
+          append("Motivo: $reason")
+        }
+        val retryPending = buildOpenTaskConfirmationPendingIntent(task.id)
+        builder
+          .setContentTitle("Error en programación: ${task.title}")
+          .setSubText("Requiere revisión")
+          .setContentText("${task.contactName} • $reason")
+          .setStyle(NotificationCompat.BigTextStyle().bigText(bigText))
+          .setOngoing(false)
+          .setUsesChronometer(false)
+          .addAction(0, "Revisar", openSchedulerPending)
+          .addAction(0, "Enviar ahora", retryPending)
+      }
+
+      ScheduleNotificationMode.NONE -> return
+    }
+
+    runCatching {
+      notificationManager.notify(ACTIVE_SCHEDULE_NOTIFICATION_ID, builder.build())
+    }
   }
 
   fun scheduleTaskReminder(task: ScheduledTask) {
@@ -199,6 +342,49 @@ class SchedulerAlarmHelper(
     )
   }
 
+  private fun buildOpenSchedulerPendingIntent(): PendingIntent {
+    val openIntent = Intent(context, MainActivity::class.java).apply {
+      flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+      putExtra(EXTRA_OPEN_SCHEDULER, true)
+    }
+    return PendingIntent.getActivity(
+      context,
+      40_001,
+      openIntent,
+      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+  }
+
+  private fun buildOpenTaskConfirmationPendingIntent(taskId: Long): PendingIntent {
+    val openIntent = Intent(context, MainActivity::class.java).apply {
+      flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+      putExtra(EXTRA_LAUNCH_SCHEDULED_TASK_ID, taskId)
+    }
+    return PendingIntent.getActivity(
+      context,
+      20_000 + requestCodeFor(taskId),
+      openIntent,
+      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+  }
+
+  private fun buildScheduleActionPendingIntent(
+    taskId: Long,
+    action: String,
+    slot: Int,
+  ): PendingIntent {
+    val intent = Intent(context, ScheduleNotificationActionReceiver::class.java).apply {
+      this.action = action
+      putExtra(EXTRA_TASK_ID, taskId)
+    }
+    return PendingIntent.getBroadcast(
+      context,
+      50_000 + slot * 1000 + (requestCodeFor(taskId) % 999),
+      intent,
+      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+  }
+
   private fun setWakeupBroadcast(
     requestCode: Int,
     taskId: Long,
@@ -248,6 +434,7 @@ class SchedulerAlarmHelper(
     actionLabel: String,
     openActiveAutomation: Boolean,
   ) {
+    if (!hasNotificationPermission()) return
     ensureChannel()
     val openIntent = Intent(context, MainActivity::class.java).apply {
       flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -284,10 +471,13 @@ class SchedulerAlarmHelper(
 
   companion object {
     const val CHANNEL_ID = "whatsapp_repeater_scheduler"
+    const val ACTIVE_STATUS_CHANNEL_ID = "whatsapp_repeater_scheduler_status"
     const val EXTRA_TASK_ID = "extra_scheduled_task_id"
     const val EXTRA_IS_PRE_ALERT = "extra_scheduled_is_pre_alert"
     const val EXTRA_LAUNCH_SCHEDULED_TASK_ID = "extra_launch_scheduled_task_id"
     const val EXTRA_LAUNCH_ACTIVE_AUTOMATION = "extra_launch_active_automation"
+    const val EXTRA_OPEN_SCHEDULER = "extra_open_scheduler"
+    private const val ACTIVE_SCHEDULE_NOTIFICATION_ID = 70_100
     private const val PRE_ALERT_CODE_OFFSET = 100_000
     private const val NOTIFICATION_BASE_ID = 71_000
     private const val PRE_NOTIFICATION_BASE_ID = 72_000

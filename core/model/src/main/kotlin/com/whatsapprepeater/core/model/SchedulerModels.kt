@@ -158,3 +158,116 @@ object SchedulerLogic {
     }
   }
 }
+
+enum class ScheduleNotificationMode {
+  NONE,
+  ACTIVE,
+  PAUSED,
+  VACATION_PAUSED,
+  FAILED,
+}
+
+data class ActiveScheduleNotificationState(
+  val mode: ScheduleNotificationMode,
+  val primaryTask: ScheduledTask? = null,
+  val activeCount: Int = 0,
+  val pausedCount: Int = 0,
+  val failedCount: Int = 0,
+  val remainingMillis: Long = 0L,
+)
+
+object ScheduleCountdownFormatter {
+
+  fun formatRemaining(remainingMillis: Long): String {
+    val totalSeconds = (remainingMillis / 1000L).coerceAtLeast(0L)
+    val days = totalSeconds / 86_400L
+    val hours = (totalSeconds % 86_400L) / 3_600L
+    val minutes = (totalSeconds % 3_600L) / 60L
+    val seconds = totalSeconds % 60L
+    return if (days > 0L) {
+      String.format(java.util.Locale.US, "%dd %02d:%02d:%02d", days, hours, minutes, seconds)
+    } else {
+      String.format(java.util.Locale.US, "%02d:%02d:%02d", hours, minutes, seconds)
+    }
+  }
+
+  /**
+   * Deriva un único estado consolidado para la notificación persistente del Programador,
+   * garantizando que nunca se dupliquen notificaciones y priorizando la tarea más próxima.
+   */
+  fun deriveNotificationState(
+    tasks: List<ScheduledTask>,
+    vacationPauseEnabled: Boolean,
+    nowMillis: Long,
+  ): ActiveScheduleNotificationState {
+    val activeTasks = tasks.filter {
+      it.enabled &&
+        it.status != ScheduledTaskStatus.PAUSED &&
+        it.status != ScheduledTaskStatus.COMPLETED &&
+        it.status != ScheduledTaskStatus.EXPIRED &&
+        it.status != ScheduledTaskStatus.FAILED
+    }.sortedBy { it.triggerAtMillis }
+
+    val pausedTasks = tasks.filter {
+      it.status == ScheduledTaskStatus.PAUSED ||
+        (!it.enabled &&
+          it.status != ScheduledTaskStatus.COMPLETED &&
+          it.status != ScheduledTaskStatus.FAILED &&
+          it.status != ScheduledTaskStatus.EXPIRED)
+    }.sortedBy { it.triggerAtMillis }
+
+    val failedTasks = tasks.filter {
+      it.status == ScheduledTaskStatus.FAILED
+    }.sortedByDescending { it.updatedAtMillis }
+
+    if (vacationPauseEnabled && activeTasks.isNotEmpty()) {
+      val next = activeTasks.first()
+      return ActiveScheduleNotificationState(
+        mode = ScheduleNotificationMode.VACATION_PAUSED,
+        primaryTask = next,
+        activeCount = activeTasks.size,
+        pausedCount = pausedTasks.size,
+        failedCount = failedTasks.size,
+        remainingMillis = (next.triggerAtMillis - nowMillis).coerceAtLeast(0L),
+      )
+    }
+
+    if (activeTasks.isNotEmpty()) {
+      val next = activeTasks.first()
+      return ActiveScheduleNotificationState(
+        mode = ScheduleNotificationMode.ACTIVE,
+        primaryTask = next,
+        activeCount = activeTasks.size,
+        pausedCount = pausedTasks.size,
+        failedCount = failedTasks.size,
+        remainingMillis = (next.triggerAtMillis - nowMillis).coerceAtLeast(0L),
+      )
+    }
+
+    if (pausedTasks.isNotEmpty()) {
+      val next = pausedTasks.first()
+      return ActiveScheduleNotificationState(
+        mode = ScheduleNotificationMode.PAUSED,
+        primaryTask = next,
+        activeCount = 0,
+        pausedCount = pausedTasks.size,
+        failedCount = failedTasks.size,
+        remainingMillis = (next.triggerAtMillis - nowMillis).coerceAtLeast(0L),
+      )
+    }
+
+    if (failedTasks.isNotEmpty()) {
+      val latestFailed = failedTasks.first()
+      return ActiveScheduleNotificationState(
+        mode = ScheduleNotificationMode.FAILED,
+        primaryTask = latestFailed,
+        activeCount = 0,
+        pausedCount = 0,
+        failedCount = failedTasks.size,
+        remainingMillis = 0L,
+      )
+    }
+
+    return ActiveScheduleNotificationState(mode = ScheduleNotificationMode.NONE)
+  }
+}

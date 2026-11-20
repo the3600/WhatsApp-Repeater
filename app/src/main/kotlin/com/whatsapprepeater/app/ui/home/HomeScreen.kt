@@ -36,7 +36,10 @@ import androidx.compose.material.icons.rounded.BookmarkAdded
 import androidx.compose.material.icons.rounded.Bookmarks
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ErrorOutline
+import androidx.compose.material.icons.rounded.EventNote
+import androidx.compose.material.icons.rounded.FormatListNumbered
 import androidx.compose.material.icons.rounded.HealthAndSafety
+import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.RepeatOn
 import androidx.compose.material.icons.rounded.Schedule
@@ -55,7 +58,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -93,6 +98,8 @@ import com.whatsapprepeater.app.ui.theme.WhatsAppGreen
 import com.whatsapprepeater.app.ui.theme.WhatsAppGreenContainer
 import com.whatsapprepeater.core.model.ExecutionFinalStatus
 import com.whatsapprepeater.core.model.ExecutionRecord
+import com.whatsapprepeater.core.model.ScheduleCountdownFormatter
+import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -109,6 +116,7 @@ fun HomeScreen(
   onSelectBottomTab: (BottomTab) -> Unit,
   onOpenLibrary: () -> Unit = {},
   onOpenScheduler: () -> Unit = {},
+  onOpenActivityCenter: () -> Unit = {},
   onOpenDiagnostics: () -> Unit = {},
   onOpenAnalytics: () -> Unit = {},
   onOpenUpdates: () -> Unit = {},
@@ -117,6 +125,16 @@ fun HomeScreen(
   val lifecycleOwner = LocalLifecycleOwner.current
   val state by viewModel.uiState.collectAsStateWithLifecycle()
   var showQuickGuideDialog by remember { mutableStateOf(false) }
+  var liveNowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
+
+  LaunchedEffect(state.nextScheduledTask?.id, state.nextScheduledTask?.triggerAtMillis, state.settings.vacationPauseEnabled) {
+    if (state.nextScheduledTask != null && !state.settings.vacationPauseEnabled) {
+      while (true) {
+        liveNowMillis = System.currentTimeMillis()
+        delay(1_000L)
+      }
+    }
+  }
 
   DisposableEffect(lifecycleOwner) {
     val observer = LifecycleEventObserver { _, event ->
@@ -391,14 +409,31 @@ fun HomeScreen(
             )
           }
           Spacer(modifier = Modifier.height(8.dp))
+          // Resumen KPI en vivo: preparados, completados y errores por revisar
+          Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            HomeKpiPill("Preparados", "${state.draftPendingMessagesCount}", WhatsAppGreen, Modifier.weight(1f), onClick = onCreateAutomation)
+            HomeKpiPill("Completados", "${state.completedExecutionsCount}", WhatsAppGreen, Modifier.weight(1f), onClick = onOpenHistoryTab)
+            HomeKpiPill(
+              "Por revisar",
+              "${state.pendingErrorsToReviewCount}",
+              if (state.pendingErrorsToReviewCount > 0) DangerRed else TextSecondary,
+              Modifier.weight(1f),
+              onClick = onOpenActivityCenter,
+            )
+          }
+          Spacer(modifier = Modifier.height(8.dp))
           val nextTask = state.nextScheduledTask
+          val remainingText = if (nextTask != null && !state.settings.vacationPauseEnabled) {
+            ScheduleCountdownFormatter.formatRemaining((nextTask.triggerAtMillis - liveNowMillis).coerceAtLeast(0L))
+          } else null
           val scheduleLabel = when {
-            state.settings.vacationPauseEnabled -> "Modo vacaciones activo (pausado)"
+            state.settings.vacationPauseEnabled -> "Modo vacaciones activo (${state.activeSchedulesCount} pausadas)"
             nextTask != null -> {
-              val dateFmt = SimpleDateFormat("dd/MM HH:mm", Locale.getDefault()).format(Date(nextTask.triggerAtMillis))
-              "${nextTask.title} ($dateFmt)"
+              val dateFmt = SimpleDateFormat("dd/MM h:mm a", Locale.forLanguageTag("es")).format(Date(nextTask.triggerAtMillis))
+              "${nextTask.title} • ${nextTask.contactName} ($dateFmt)"
             }
-            else -> "Sin envíos programados"
+            state.pausedSchedulesCount > 0 -> "${state.pausedSchedulesCount} programación(es) pausada(s)"
+            else -> "Sin envíos programados activos"
           }
           Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -414,7 +449,15 @@ fun HomeScreen(
               Icon(Icons.Rounded.Schedule, contentDescription = null, tint = WhatsAppGreen, modifier = Modifier.size(18.dp))
               Spacer(modifier = Modifier.width(8.dp))
               Column {
-                Text("Próxima programación", style = MaterialTheme.typography.labelSmall, color = TextSecondary)
+                Text(
+                  text = if (state.activeSchedulesCount > 0) {
+                    "Programaciones activas (${state.activeSchedulesCount}) • Próximo envío"
+                  } else {
+                    "Próxima programación"
+                  },
+                  style = MaterialTheme.typography.labelSmall,
+                  color = TextSecondary,
+                )
                 Text(
                   text = scheduleLabel,
                   style = MaterialTheme.typography.bodySmall,
@@ -422,6 +465,14 @@ fun HomeScreen(
                   maxLines = 1,
                   overflow = TextOverflow.Ellipsis,
                 )
+                if (remainingText != null) {
+                  Text(
+                    text = "Faltan: $remainingText",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = WhatsAppGreen,
+                    fontWeight = FontWeight.Bold,
+                  )
+                }
               }
             }
             Icon(Icons.AutoMirrored.Rounded.ArrowForward, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(16.dp))
@@ -433,8 +484,18 @@ fun HomeScreen(
               .fillMaxWidth()
               .horizontalScroll(rememberScrollState()),
           ) {
-            ControlShortcutChip("Biblioteca (${state.savedTemplatesCount})", Icons.Rounded.Bookmarks, onOpenLibrary)
+            ControlShortcutChip("Repetidor", Icons.Rounded.RepeatOn) {
+              viewModel.prepareNewAutomation(isMultipleMode = false)
+              onCreateAutomation()
+            }
+            ControlShortcutChip("Secuencias", Icons.Rounded.FormatListNumbered) {
+              viewModel.prepareNewAutomation(isMultipleMode = true)
+              onCreateAutomation()
+            }
             ControlShortcutChip("Programador", Icons.Rounded.Schedule, onOpenScheduler)
+            ControlShortcutChip("Actividad", Icons.Rounded.EventNote, onOpenActivityCenter)
+            ControlShortcutChip("Biblioteca (${state.savedTemplatesCount})", Icons.Rounded.Bookmarks, onOpenLibrary)
+            ControlShortcutChip("Historial", Icons.Rounded.History, onOpenHistoryTab)
             ControlShortcutChip("Diagnóstico", Icons.Rounded.HealthAndSafety, onOpenDiagnostics)
             ControlShortcutChip("Analíticas", Icons.Rounded.BarChart, onOpenAnalytics)
             ControlShortcutChip("Motor 2", Icons.Rounded.AutoAwesome) { onSelectBottomTab(BottomTab.AUTORESPONDER) }
@@ -632,6 +693,27 @@ private fun RecentExecutionCard(
 }
 
 private data class Quad<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
+
+@Composable
+private fun HomeKpiPill(
+  label: String,
+  value: String,
+  accent: androidx.compose.ui.graphics.Color,
+  modifier: Modifier = Modifier,
+  onClick: () -> Unit,
+) {
+  Column(
+    horizontalAlignment = Alignment.CenterHorizontally,
+    modifier = modifier
+      .clip(RoundedCornerShape(12.dp))
+      .background(CardSurfaceElevated)
+      .clickable(onClick = onClick)
+      .padding(vertical = 8.dp, horizontal = 6.dp),
+  ) {
+    Text(value, style = MaterialTheme.typography.titleMedium, color = accent, fontWeight = FontWeight.Bold)
+    Text(label, style = MaterialTheme.typography.labelSmall, color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+  }
+}
 
 @Composable
 private fun ControlMiniStatusTile(

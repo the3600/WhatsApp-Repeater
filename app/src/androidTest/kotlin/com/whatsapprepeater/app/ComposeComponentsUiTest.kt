@@ -8,6 +8,8 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.platform.app.InstrumentationRegistry
 import com.whatsapprepeater.app.autoreply.AutoReplyRuntimeState
+import com.whatsapprepeater.app.ui.activity.ActivityCenterScreen
+import com.whatsapprepeater.app.ui.activity.ActivityCenterViewModel
 import com.whatsapprepeater.app.ui.insights.AnalyticsScreen
 import com.whatsapprepeater.app.ui.insights.DiagnosticsScreen
 import com.whatsapprepeater.app.ui.insights.InsightsViewModel
@@ -421,5 +423,24 @@ class ComposeComponentsUiTest {
       }
     }
     composeRule.onNodeWithText("Analíticas Locales y Privadas").assertIsDisplayed()
+  }
+
+  @Test
+  fun activityCenterScreen_rendersFiltersAndKpisWithoutCrash() {
+    val context = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext
+    val activityVm = ActivityCenterViewModel(AppContainer(context), context)
+    composeRule.setContent {
+      WhatsAppRepeaterTheme {
+        ActivityCenterScreen(
+          viewModel = activityVm,
+          onBack = {},
+          onOpenExecutionDetail = {},
+          onOpenScheduler = {},
+          onOpenDiagnostics = {},
+        )
+      }
+    }
+    composeRule.onNodeWithText("Centro de Actividad").assertIsDisplayed()
+    composeRule.onNodeWithText("Programaciones").assertIsDisplayed()
   }
 }

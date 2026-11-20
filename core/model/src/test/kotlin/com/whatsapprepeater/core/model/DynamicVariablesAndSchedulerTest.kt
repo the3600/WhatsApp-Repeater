@@ -126,4 +126,78 @@ class DynamicVariablesAndSchedulerTest {
     val pausedExisting = customTask.copy(id = 11L, status = ScheduledTaskStatus.PAUSED, enabled = false)
     assertNull(SchedulerLogic.findDuplicateConflict(customTask.copy(id = 0L), listOf(pausedExisting)))
   }
+
+  @Test
+  fun `formats schedule countdown accurately and derives consolidated notification state without duplicates`() {
+    assertEquals("00:24:35", ScheduleCountdownFormatter.formatRemaining((24 * 60 + 35) * 1000L))
+    assertEquals("1d 02:05:09", ScheduleCountdownFormatter.formatRemaining((86_400L + 2 * 3_600L + 5 * 60L + 9L) * 1000L))
+    assertEquals("00:00:00", ScheduleCountdownFormatter.formatRemaining(-5_000L))
+
+    val now = mondayTenAm
+    val laterTask = ScheduledTask(
+      id = 1L,
+      title = "Tarde",
+      contactId = "1",
+      contactName = "Ana",
+      contactPhone = "+525576294320",
+      isMultipleMode = false,
+      messages = emptyList(),
+      singleMessage = "Hola",
+      repeatCount = 2,
+      minIntervalSeconds = 10,
+      maxIntervalSeconds = 20,
+      preferWhatsAppBusiness = false,
+      triggerAtMillis = now + 7_200_000L,
+      enabled = true,
+      status = ScheduledTaskStatus.PENDING,
+    )
+    val soonerTask = laterTask.copy(id = 2L, title = "Pronto", triggerAtMillis = now + 1_475_000L)
+    val pausedTask = laterTask.copy(id = 3L, title = "Pausada", enabled = false, status = ScheduledTaskStatus.PAUSED)
+
+    // Prioritizes nearest active schedule and consolidates counts in one state
+    val activeState = ScheduleCountdownFormatter.deriveNotificationState(
+      tasks = listOf(laterTask, soonerTask, pausedTask),
+      vacationPauseEnabled = false,
+      nowMillis = now,
+    )
+    assertEquals(ScheduleNotificationMode.ACTIVE, activeState.mode)
+    assertEquals(2L, activeState.primaryTask?.id)
+    assertEquals(2, activeState.activeCount)
+    assertEquals(1, activeState.pausedCount)
+    assertEquals("00:24:35", ScheduleCountdownFormatter.formatRemaining(activeState.remainingMillis))
+
+    // Vacation mode pauses active notifications clearly
+    val vacationState = ScheduleCountdownFormatter.deriveNotificationState(
+      tasks = listOf(soonerTask),
+      vacationPauseEnabled = true,
+      nowMillis = now,
+    )
+    assertEquals(ScheduleNotificationMode.VACATION_PAUSED, vacationState.mode)
+
+    // Paused only
+    val pausedOnly = ScheduleCountdownFormatter.deriveNotificationState(
+      tasks = listOf(pausedTask),
+      vacationPauseEnabled = false,
+      nowMillis = now,
+    )
+    assertEquals(ScheduleNotificationMode.PAUSED, pausedOnly.mode)
+
+    // Failed only
+    val failedTask = laterTask.copy(id = 4L, enabled = false, status = ScheduledTaskStatus.FAILED, lastFailureReason = "Pantalla bloqueada")
+    val failedOnly = ScheduleCountdownFormatter.deriveNotificationState(
+      tasks = listOf(failedTask),
+      vacationPauseEnabled = false,
+      nowMillis = now,
+    )
+    assertEquals(ScheduleNotificationMode.FAILED, failedOnly.mode)
+    assertEquals(4L, failedOnly.primaryTask?.id)
+
+    // Empty / completed only -> NONE
+    val completedOnly = ScheduleCountdownFormatter.deriveNotificationState(
+      tasks = listOf(laterTask.copy(enabled = false, status = ScheduledTaskStatus.COMPLETED)),
+      vacationPauseEnabled = false,
+      nowMillis = now,
+    )
+    assertEquals(ScheduleNotificationMode.NONE, completedOnly.mode)
+  }
 }

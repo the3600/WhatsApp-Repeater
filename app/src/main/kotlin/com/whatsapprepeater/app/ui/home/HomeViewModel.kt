@@ -31,7 +31,11 @@ data class HomeUiState(
   val autoReplySettings: AutoReplySettings = AutoReplySettings(),
   val autoReplyRuntime: AutoReplyRuntimeState = AutoReplyRuntimeState(),
   val nextScheduledTask: ScheduledTask? = null,
+  val activeSchedulesCount: Int = 0,
+  val pausedSchedulesCount: Int = 0,
   val failedSchedulesCount: Int = 0,
+  val completedExecutionsCount: Int = 0,
+  val failedExecutionsCount: Int = 0,
   val savedTemplatesCount: Int = 0,
   val canInstallUpdates: Boolean = false,
 ) {
@@ -51,6 +55,9 @@ data class HomeUiState(
     } else {
       0
     }
+
+  val pendingErrorsToReviewCount: Int
+    get() = failedSchedulesCount + failedExecutionsCount + (if (!isAccessibilityReady) 1 else 0) + (if (!isWhatsAppInstalled) 1 else 0)
 
   val attentionAlertsCount: Int
     get() {
@@ -116,17 +123,25 @@ class HomeViewModel(
     @Suppress("UNCHECKED_CAST")
     val templates = ctrl[3] as List<com.whatsapprepeater.core.model.SavedMessageList>
 
-    val nextTask = tasks
-      .filter {
-        it.enabled &&
-          it.status != ScheduledTaskStatus.EXPIRED &&
-          it.status != ScheduledTaskStatus.FAILED &&
-          it.status != ScheduledTaskStatus.PAUSED &&
-          it.status != ScheduledTaskStatus.COMPLETED
-      }
-      .minByOrNull { it.triggerAtMillis }
+    val activeSchedules = tasks.filter {
+      it.enabled &&
+        it.status != ScheduledTaskStatus.EXPIRED &&
+        it.status != ScheduledTaskStatus.FAILED &&
+        it.status != ScheduledTaskStatus.PAUSED &&
+        it.status != ScheduledTaskStatus.COMPLETED
+    }
+    val nextTask = activeSchedules.minByOrNull { it.triggerAtMillis }
+    val pausedCount = tasks.count {
+      it.status == ScheduledTaskStatus.PAUSED ||
+        (!it.enabled && it.status != ScheduledTaskStatus.COMPLETED && it.status != ScheduledTaskStatus.FAILED && it.status != ScheduledTaskStatus.EXPIRED)
+    }
     val failedOrExpired = tasks.count {
       it.status == ScheduledTaskStatus.FAILED || it.status == ScheduledTaskStatus.EXPIRED
+    }
+    val completedExecs = history.count { it.finalStatus == com.whatsapprepeater.core.model.ExecutionFinalStatus.COMPLETED }
+    val failedExecs = history.count {
+      it.finalStatus == com.whatsapprepeater.core.model.ExecutionFinalStatus.FAILED_ERROR ||
+        it.finalStatus == com.whatsapprepeater.core.model.ExecutionFinalStatus.FAILED_SAFETY_CHECK
     }
 
     HomeUiState(
@@ -141,7 +156,11 @@ class HomeViewModel(
       autoReplySettings = autoSettings,
       autoReplyRuntime = autoRuntime,
       nextScheduledTask = nextTask,
+      activeSchedulesCount = activeSchedules.size,
+      pausedSchedulesCount = pausedCount,
       failedSchedulesCount = failedOrExpired,
+      completedExecutionsCount = completedExecs,
+      failedExecutionsCount = failedExecs,
       savedTemplatesCount = templates.size,
     )
   }.stateIn(
@@ -156,7 +175,7 @@ class HomeViewModel(
     canInstallUpdatesFlag.value = container.updateManager.canRequestPackageInstalls()
   }
 
-  fun prepareNewAutomation() {
+  fun prepareNewAutomation(isMultipleMode: Boolean = true) {
     val currentSettings = uiState.value.settings
     container.automationEngine.resetToIdle()
     container.resetDraftForNewAutomation(
@@ -164,6 +183,7 @@ class HomeViewModel(
       defaultMax = currentSettings.defaultMaxIntervalSeconds,
       preferBusiness = currentSettings.preferWhatsAppBusiness,
     )
+    container.updateDraft { it.copy(isMultipleMode = isMultipleMode) }
   }
 
   fun clearHistory() {

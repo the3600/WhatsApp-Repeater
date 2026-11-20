@@ -92,6 +92,7 @@ class ScheduledReminderReceiver : BroadcastReceiver() {
         helper.scheduleTaskReminder(task)
       }
     }
+    helper.syncActiveScheduleNotification(repo.getAllOnce(), settings.vacationPauseEnabled)
   }
 
   private suspend fun handleScheduledTrigger(

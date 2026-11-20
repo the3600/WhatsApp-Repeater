@@ -51,6 +51,11 @@ class MainActivity : ComponentActivity() {
       container.requestOpenActiveAutomation()
       safeIntent.removeExtra(SchedulerAlarmHelper.EXTRA_LAUNCH_ACTIVE_AUTOMATION)
     }
+    val openScheduler = safeIntent.getBooleanExtra(SchedulerAlarmHelper.EXTRA_OPEN_SCHEDULER, false)
+    if (openScheduler) {
+      container.requestOpenScheduler()
+      safeIntent.removeExtra(SchedulerAlarmHelper.EXTRA_OPEN_SCHEDULER)
+    }
     val taskId = safeIntent.getLongExtra(SchedulerAlarmHelper.EXTRA_LAUNCH_SCHEDULED_TASK_ID, -1L)
     if (taskId > 0L) {
       container.requestOpenScheduledTask(taskId)
