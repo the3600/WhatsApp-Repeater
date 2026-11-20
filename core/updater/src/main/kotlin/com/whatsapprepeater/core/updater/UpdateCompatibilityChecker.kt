@@ -1,5 +1,7 @@
 package com.whatsapprepeater.core.updater
 
+import java.net.URI
+
 data class InstalledAppInfo(
   val applicationId: String,
   val versionCode: Long,
@@ -23,18 +25,47 @@ sealed interface UpdateCheckResult {
 }
 
 /**
- * Evalúa compatibilidad de actualización antes de descargar o instalar,
- * protegiendo la identidad del paquete, firma, versionCode y datos del usuario.
+ * Evalúa compatibilidad e integridad de actualizaciones antes de descargar o instalar,
+ * validando origen HTTPS confiable, applicationId, versionCode y firma independiente del APK.
  */
 object UpdateCompatibilityChecker {
 
   const val EXPECTED_APPLICATION_ID = "com.whatsapprepeater.android"
+
+  private val trustedDownloadHosts = setOf(
+    "github.com",
+    "api.github.com",
+    "objects.githubusercontent.com",
+    "release-assets.githubusercontent.com",
+    "github-releases.githubusercontent.com",
+  )
+
+  fun validateDownloadUrl(urlString: String): String? {
+    val trimmed = urlString.trim()
+    if (trimmed.isEmpty()) return "La URL de descarga está vacía."
+    val uri = runCatching { URI(trimmed) }.getOrNull()
+      ?: return "La URL de descarga tiene un formato inválido."
+    if (!uri.scheme.equals("https", ignoreCase = true)) {
+      return "Solo se permiten descargas cifradas mediante HTTPS."
+    }
+    val host = uri.host?.lowercase()?.trim().orEmpty()
+    val trusted = host in trustedDownloadHosts || host.endsWith(".githubusercontent.com")
+    if (!trusted) {
+      return "El dominio remoto ($host) no pertenece a los servidores oficiales de GitHub Releases."
+    }
+    return null
+  }
 
   fun evaluate(
     installed: InstalledAppInfo,
     candidate: RemoteReleaseCandidate,
     resolvedSha256: String?,
   ): UpdateCheckResult {
+    val urlError = validateDownloadUrl(candidate.apkDownloadUrl)
+    if (urlError != null) {
+      return UpdateCheckResult.IncompatibleUpdate(candidate = candidate, reason = urlError)
+    }
+
     val metadata = candidate.metadata
 
     if (metadata != null) {
@@ -84,6 +115,10 @@ object UpdateCompatibilityChecker {
     )
   }
 
+  /**
+   * Comprobación independiente sobre el binario APK descargado: nunca confía únicamente
+   * en metadatos JSON; exige certificado de firma presente y coincidente con el instalado.
+   */
   fun validateDownloadedApkMetadata(
     installed: InstalledAppInfo,
     apkPackageName: String?,
@@ -96,13 +131,15 @@ object UpdateCompatibilityChecker {
     if (apkVersionCode <= installed.versionCode) {
       return "El versionCode del APK ($apkVersionCode) no es superior al instalado (${installed.versionCode})."
     }
-    if (!installed.signingCertSha256.isNullOrBlank() &&
-      !apkSigningCertSha256.isNullOrBlank() &&
-      !installed.signingCertSha256.equals(apkSigningCertSha256, ignoreCase = true)
-    ) {
+    if (apkSigningCertSha256.isNullOrBlank()) {
+      return "El APK descargado no contiene un certificado de firma verificable. Actualización bloqueada por seguridad."
+    }
+    if (installed.signingCertSha256.isNullOrBlank()) {
+      return "No se pudo leer la firma de la app instalada para confirmar compatibilidad criptográfica."
+    }
+    if (!installed.signingCertSha256.equals(apkSigningCertSha256, ignoreCase = true)) {
       return "La firma del APK descargado no coincide con la clave de la app instalada. Android rechazaría la actualización sin desinstalar."
     }
     return null
   }
 }
-

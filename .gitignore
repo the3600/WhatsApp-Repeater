@@ -22,13 +22,30 @@ build/
 *.pfx
 *.pem
 *.key
+*.crt
+*.cer
 keystore.properties
 *signing*.properties
+*secret*.properties
+*secret*.json
+google-services.json
+credentials.json
 *.b64
 *.b64.txt
 .env
 .env.*
-credentials.json
+
+# Databases, local backups, exports & sensitive logs
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.wrbackup
+*.bak
+*.enc
+*.log
+*.hprof
 
 # Generated APKs, AABs & distribution archives
 *.apk

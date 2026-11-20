@@ -120,6 +120,12 @@ class UpdateManager(
     candidate: RemoteReleaseCandidate,
     expectedSha256: String?,
   ): Flow<ApkDownloadEvent> = flow {
+    val urlError = UpdateCompatibilityChecker.validateDownloadUrl(candidate.apkDownloadUrl)
+    if (urlError != null) {
+      emit(ApkDownloadEvent.Incompatible(urlError))
+      return@flow
+    }
+
     val updatesDir = File(context.cacheDir, "updates").apply {
       mkdirs()
       // Limpiar descargas previas temporales para no acumular caché.
@@ -137,6 +143,11 @@ class UpdateManager(
 
     try {
       val code = connection.responseCode
+      val finalUrlError = UpdateCompatibilityChecker.validateDownloadUrl(connection.url.toString())
+      if (finalUrlError != null) {
+        emit(ApkDownloadEvent.Incompatible("Redirección bloqueada: $finalUrlError"))
+        return@flow
+      }
       if (code !in 200..299) {
         emit(ApkDownloadEvent.Failed("Error HTTP $code al descargar el APK."))
         return@flow

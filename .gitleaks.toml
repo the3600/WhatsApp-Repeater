@@ -1,0 +1,26 @@
+title = "WhatsApp Repeater Gitleaks Configuration"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "android-keystore-password-hardcoded"
+description = "Hardcoded Android signing storePassword or keyPassword literal"
+regex = '''(?i)(storePassword|keyPassword)\s*=\s*["'][^"'$\s]{6,}["']'''
+tags = ["android", "signing", "secret"]
+
+[[rules]]
+id = "android-keystore-base64-inline"
+description = "Inline base64 Android JKS keystore header (JKS magic 0xFEEDFEED)"
+regex = '''/u3\+7QAAAAI[A-Za-z0-9+/=]{24,}'''
+tags = ["android", "keystore", "secret"]
+
+[allowlist]
+description = "Only allow known public certificate SHA-256 fingerprint and placeholder test passphrases"
+regexes = [
+  '''0e582e7eec8712c582f7a48f1ad1d473e2ba149f4ed997914574a4daeb13c109''',
+  '''0E:58:2E:7E:EC:87:12:C5:82:F7:A4:8F:1A:D1:D4:73:E2:BA:14:9F:4E:D9:97:91:45:74:A4:DA:EB:13:C1:09''',
+]
+paths = [
+  '''core/data/schemas/.*\.json$''',
+]

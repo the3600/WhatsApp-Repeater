@@ -1,0 +1,25 @@
+#!/usr/bin/env sh
+# Pre-commit hook de seguridad para WhatsApp Repeater.
+# Activar localmente con: git config core.hooksPath .githooks
+
+set -eu
+
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM)
+if [ -z "$STAGED_FILES" ]; then
+  exit 0
+fi
+
+FORBIDDEN=$(printf '%s\n' "$STAGED_FILES" | grep -E '\.(jks|keystore|p12|pfx|pem|key|db|sqlite|sqlite3|env|wrbackup|apk|aab)$|keystore\.properties|signing\.properties|local\.properties' || true)
+if [ -n "$FORBIDDEN" ]; then
+  echo "[BLOQUEADO] Intentaste hacer commit de archivos sensibles o binarios prohibidos:"
+  echo "$FORBIDDEN"
+  exit 1
+fi
+
+SECRET_HITS=$(git diff --cached -U0 | grep -E '^\+.*(BEGIN (RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}|/u3\+7QAAAAI)' || true)
+if [ -n "$SECRET_HITS" ]; then
+  echo "[BLOQUEADO] Se detectó un posible secreto o clave privada en los cambios staged."
+  exit 1
+fi
+
+exit 0

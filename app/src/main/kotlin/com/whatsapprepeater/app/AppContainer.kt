@@ -6,6 +6,7 @@ import androidx.room.Room
 import com.whatsapprepeater.app.autoreply.AutoReplyCoordinator
 import com.whatsapprepeater.app.autoreply.AutoReplyNotificationHelper
 import com.whatsapprepeater.app.scheduler.SchedulerAlarmHelper
+import com.whatsapprepeater.app.security.AndroidKeystoreVault
 import com.whatsapprepeater.app.service.AndroidAccessibilityDriver
 import com.whatsapprepeater.app.service.AutomationNotificationHelper
 import com.whatsapprepeater.app.updater.UpdateManager
@@ -182,6 +183,7 @@ class AppContainer(context: Context) {
   val accessibilityDriver = AndroidAccessibilityDriver(context)
   val updateManager = UpdateManager(context)
   val schedulerAlarmHelper = SchedulerAlarmHelper(appContext)
+  val keystoreVault = AndroidKeystoreVault()
   private val notificationHelper = AutomationNotificationHelper(context)
   private val autoReplyNotificationHelper = AutoReplyNotificationHelper(context)
 

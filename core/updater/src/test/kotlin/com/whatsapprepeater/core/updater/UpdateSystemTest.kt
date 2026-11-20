@@ -152,6 +152,37 @@ class UpdateSystemTest {
       apkSigningCertSha256 = "f".repeat(64),
     )
     assertTrue(wrongSig!!.contains("firma"))
+
+    val unsignedApk = UpdateCompatibilityChecker.validateDownloadedApkMetadata(
+      installed = installed,
+      apkPackageName = "com.whatsapprepeater.android",
+      apkVersionCode = 2L,
+      apkSigningCertSha256 = null,
+    )
+    assertNotNull("APK sin certificado debe ser rechazado", unsignedApk)
+    assertTrue(unsignedApk!!.contains("certificado"))
+  }
+
+  @Test
+  fun `rejects non-https and untrusted third-party apk download hosts`() {
+    assertEquals(
+      null,
+      UpdateCompatibilityChecker.validateDownloadUrl(
+        "https://github.com/the3600/WhatsApp-Repeater/releases/download/v1.0.1/app.apk",
+      ),
+    )
+    assertEquals(
+      null,
+      UpdateCompatibilityChecker.validateDownloadUrl(
+        "https://objects.githubusercontent.com/github-production-release-asset/app.apk",
+      ),
+    )
+    assertNotNull(
+      UpdateCompatibilityChecker.validateDownloadUrl("http://github.com/the3600/WhatsApp-Repeater/app.apk"),
+    )
+    assertNotNull(
+      UpdateCompatibilityChecker.validateDownloadUrl("https://evil-mirror.example.com/fake-update.apk"),
+    )
   }
 
   @Test
