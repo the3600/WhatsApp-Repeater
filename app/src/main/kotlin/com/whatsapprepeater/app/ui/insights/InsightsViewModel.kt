@@ -12,8 +12,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.whatsapprepeater.app.AppContainer
+import com.whatsapprepeater.app.BuildConfig
 import com.whatsapprepeater.app.service.AccessibilitySettingsHelper
 import com.whatsapprepeater.core.model.AutoReplyLogStatus
+import com.whatsapprepeater.core.model.AutomationStatus
 import com.whatsapprepeater.core.model.DiagnosticActionType
 import com.whatsapprepeater.core.model.DiagnosticItem
 import com.whatsapprepeater.core.model.DiagnosticStatus
@@ -22,6 +24,7 @@ import com.whatsapprepeater.core.model.ExecutionFinalStatus
 import com.whatsapprepeater.core.model.LocalAnalyticsSummary
 import com.whatsapprepeater.core.model.ScheduledTaskStatus
 import com.whatsapprepeater.core.model.TemplateUsageStat
+import java.security.MessageDigest
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -240,6 +243,56 @@ class InsightsViewModel(
       ),
     )
 
+    val exactAlarmReady = container.schedulerAlarmHelper.canScheduleExactAlarms()
+    val analyticsSnap = analytics.value
+    items.add(
+      DiagnosticItem(
+        id = "scheduler_state",
+        title = "Estado del Programador y alarmas",
+        detail = "Alarmas exactas: ${if (exactAlarmReady) "autorizadas" else "no autorizadas"} • Pendientes: ${analyticsSnap.pendingSchedules} • Fallidas/vencidas: ${analyticsSnap.missedOrFailedSchedules}.",
+        recommendation = if (exactAlarmReady) null else "Autoriza 'Alarmas y recordatorios' para mejorar la puntualidad de los envíos programados.",
+        status = when {
+          !exactAlarmReady -> DiagnosticStatus.WARNING
+          analyticsSnap.missedOrFailedSchedules > 0 -> DiagnosticStatus.WARNING
+          else -> DiagnosticStatus.OK
+        },
+        actionType = if (exactAlarmReady) DiagnosticActionType.NONE else DiagnosticActionType.OPEN_EXACT_ALARMS,
+        actionLabel = if (exactAlarmReady) null else "Autorizar alarmas exactas",
+      ),
+    )
+
+    val engineState = container.automationEngine.state.value
+    items.add(
+      DiagnosticItem(
+        id = "automation_engine",
+        title = "Motor de automatización (Motor 1)",
+        detail = when (engineState.status) {
+          AutomationStatus.IDLE -> "En reposo y listo para operar."
+          AutomationStatus.COMPLETED -> "Última ejecución completada (${engineState.sentConfirmed}/${engineState.totalScheduled})."
+          AutomationStatus.ERROR -> "Detenido en etapa '${engineState.diagnosticStage.ifBlank { "Error" }}': ${engineState.errorMessage.orEmpty()}"
+          else -> "Estado actual: ${engineState.status.name} • ${engineState.statusDetail}"
+        },
+        recommendation = if (engineState.status == AutomationStatus.ERROR) "Revisa el destinatario y la accesibilidad antes de reintentar." else null,
+        status = if (engineState.status == AutomationStatus.ERROR) DiagnosticStatus.WARNING else DiagnosticStatus.OK,
+      ),
+    )
+
+    val certSha = readInstalledSigningCertSha256(context)
+    val matchesProductionCert = certSha.equals(EXPECTED_PRODUCTION_CERT_SHA256, ignoreCase = true)
+    items.add(
+      DiagnosticItem(
+        id = "app_version_signature",
+        title = "Versión instalada, firma y compatibilidad",
+        detail = "v${BuildConfig.VERSION_NAME} (code ${BuildConfig.VERSION_CODE}) • ${context.packageName}\nFirma SHA-256: ${certSha.take(16)}…${certSha.takeLast(8)}",
+        recommendation = if (matchesProductionCert) {
+          "Firma permanente de producción verificada: las futuras actualizaciones se instalarán sin desinstalar."
+        } else {
+          "Esta compilación usa firma de depuración/desarrollo; para actualizar sobre producción instala siempre la APK Release firmada."
+        },
+        status = if (matchesProductionCert) DiagnosticStatus.OK else DiagnosticStatus.WARNING,
+      ),
+    )
+
     lastConnectivityStatus?.let { items.add(it) }
 
     _diagnostics.value = items
@@ -286,12 +339,29 @@ class InsightsViewModel(
     }
   }
 
+  private fun readInstalledSigningCertSha256(context: Context): String {
+    return runCatching {
+      val info = context.packageManager.getPackageInfo(
+        context.packageName,
+        PackageManager.GET_SIGNING_CERTIFICATES,
+      )
+      val signerBytes = info.signingInfo?.apkContentsSigners?.firstOrNull()?.toByteArray()
+        ?: return@runCatching "No disponible"
+      MessageDigest.getInstance("SHA-256")
+        .digest(signerBytes)
+        .joinToString("") { "%02x".format(it) }
+    }.getOrDefault("No disponible")
+  }
+
   private fun isXiaomiOrPocoDevice(): Boolean {
     val maker = "${Build.MANUFACTURER} ${Build.BRAND}".lowercase()
     return maker.contains("xiaomi") || maker.contains("poco") || maker.contains("redmi")
   }
 
   companion object {
+    private const val EXPECTED_PRODUCTION_CERT_SHA256 =
+      "0e582e7eec8712c582f7a48f1ad1d473e2ba149f4ed997914574a4daeb13c109"
+
     fun factory(container: AppContainer): ViewModelProvider.Factory =
       object : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")

@@ -24,9 +24,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.EventNote
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ErrorOutline
-import androidx.compose.material.icons.rounded.EventNote
 import androidx.compose.material.icons.rounded.PauseCircleOutline
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Search
@@ -226,7 +226,7 @@ fun ActivityCenterScreen(
       if (state.entries.isEmpty()) {
         item {
           EmptyStateCard(
-            icon = Icons.Rounded.EventNote,
+            icon = Icons.AutoMirrored.Rounded.EventNote,
             title = "Sin actividad coincidente",
             description = "Cambia los filtros o crea una automatización/programación. Solo se registran eventos reales y confirmados.",
           )

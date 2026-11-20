@@ -1,6 +1,8 @@
 package com.whatsapprepeater.app.ui.library
 
 import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -30,6 +32,7 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Bookmarks
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.PushPin
@@ -37,6 +40,7 @@ import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.StarOutline
+import androidx.compose.material.icons.rounded.Upload
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -86,6 +90,49 @@ fun SmartLibraryScreen(
   var editingMetaFor by remember { mutableStateOf<SavedMessageList?>(null) }
   var deletingId by remember { mutableStateOf<Long?>(null) }
 
+  val exportLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.CreateDocument("application/json"),
+  ) { uri ->
+    if (uri != null) {
+      runCatching {
+        val payload = viewModel.buildExportJson()
+        context.contentResolver.openOutputStream(uri)?.use { out ->
+          out.write(payload.toByteArray(Charsets.UTF_8))
+        } ?: error("No se pudo abrir el archivo de destino.")
+      }.onSuccess {
+        viewModel.notifyExportResult(true, "Plantillas exportadas en JSON (sin datos de contactos).")
+      }.onFailure { err ->
+        viewModel.notifyExportResult(false, "Error al exportar: ${err.message ?: "fallo de escritura"}")
+      }
+    }
+  }
+
+  val importLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.OpenDocument(),
+  ) { uri ->
+    if (uri != null) {
+      runCatching {
+        context.contentResolver.openInputStream(uri)?.use { input ->
+          val out = java.io.ByteArrayOutputStream()
+          val buffer = ByteArray(8192)
+          var total = 0
+          while (true) {
+            val read = input.read(buffer)
+            if (read <= 0) break
+            total += read
+            require(total <= 2_000_000) { "El archivo excede el límite seguro de 2 MB." }
+            out.write(buffer, 0, read)
+          }
+          out.toByteArray().toString(Charsets.UTF_8)
+        } ?: error("No se pudo leer el archivo seleccionado.")
+      }.onSuccess { raw ->
+        viewModel.importTemplatesJson(raw)
+      }.onFailure { err ->
+        viewModel.notifyExportResult(false, err.message ?: "Error al leer el archivo.")
+      }
+    }
+  }
+
   Column(
     modifier = Modifier
       .fillMaxSize()
@@ -122,8 +169,59 @@ fun SmartLibraryScreen(
     ) {
       if (!state.feedback.isNullOrBlank()) {
         item {
-          SectionCard(borderColor = WhatsAppGreen, containerColor = WhatsAppGreenContainer) {
+          SectionCard(
+            borderColor = if (state.isErrorFeedback) DangerRed else WhatsAppGreen,
+            containerColor = if (state.isErrorFeedback) com.whatsapprepeater.app.ui.theme.DangerContainer else WhatsAppGreenContainer,
+          ) {
             Text(state.feedback ?: "", color = TextPrimary, style = MaterialTheme.typography.bodyMedium)
+          }
+        }
+      }
+
+      // Exportar / Importar plantillas JSON (sin datos privados de contactos)
+      item {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+          Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = CardSurface,
+            border = BorderStroke(1.dp, OutlineSubtle),
+            modifier = Modifier
+              .weight(1f)
+              .clip(RoundedCornerShape(12.dp))
+              .clickable(enabled = state.templates.isNotEmpty()) {
+                exportLauncher.launch("whatsapp-repeater-plantillas.json")
+              },
+          ) {
+            Row(
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.Center,
+              modifier = Modifier.padding(vertical = 10.dp, horizontal = 8.dp),
+            ) {
+              Icon(Icons.Rounded.Download, contentDescription = null, tint = WhatsAppGreen, modifier = Modifier.size(16.dp))
+              Spacer(modifier = Modifier.width(6.dp))
+              Text("Exportar JSON", style = MaterialTheme.typography.labelMedium, color = TextPrimary)
+            }
+          }
+          Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = CardSurface,
+            border = BorderStroke(1.dp, OutlineSubtle),
+            modifier = Modifier
+              .weight(1f)
+              .clip(RoundedCornerShape(12.dp))
+              .clickable {
+                importLauncher.launch(arrayOf("application/json", "text/plain"))
+              },
+          ) {
+            Row(
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.Center,
+              modifier = Modifier.padding(vertical = 10.dp, horizontal = 8.dp),
+            ) {
+              Icon(Icons.Rounded.Upload, contentDescription = null, tint = WhatsAppGreen, modifier = Modifier.size(16.dp))
+              Spacer(modifier = Modifier.width(6.dp))
+              Text("Importar JSON", style = MaterialTheme.typography.labelMedium, color = TextPrimary)
+            }
           }
         }
       }
@@ -214,6 +312,32 @@ fun SmartLibraryScreen(
             ) {
               Text(
                 text = cat,
+                style = MaterialTheme.typography.labelSmall,
+                color = if (selected) WhatsAppGreen else TextSecondary,
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+              )
+            }
+          }
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
+          modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        ) {
+          LibrarySortOrder.entries.forEach { sort ->
+            val selected = state.selectedSort == sort
+            Surface(
+              shape = RoundedCornerShape(10.dp),
+              color = if (selected) WhatsAppGreenContainer else CardSurface,
+              border = BorderStroke(1.dp, if (selected) WhatsAppGreen else OutlineSubtle),
+              modifier = Modifier
+                .clip(RoundedCornerShape(10.dp))
+                .clickable { viewModel.onSortSelected(sort) },
+            ) {
+              Text(
+                text = "Orden: ${sort.label}",
                 style = MaterialTheme.typography.labelSmall,
                 color = if (selected) WhatsAppGreen else TextSecondary,
                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),

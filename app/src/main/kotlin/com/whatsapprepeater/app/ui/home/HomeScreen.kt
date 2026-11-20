@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
+import androidx.compose.material.icons.automirrored.rounded.EventNote
 import androidx.compose.material.icons.automirrored.rounded.MenuBook
 import androidx.compose.material.icons.rounded.AccessibilityNew
 import androidx.compose.material.icons.rounded.AddCircleOutline
@@ -36,7 +37,6 @@ import androidx.compose.material.icons.rounded.BookmarkAdded
 import androidx.compose.material.icons.rounded.Bookmarks
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ErrorOutline
-import androidx.compose.material.icons.rounded.EventNote
 import androidx.compose.material.icons.rounded.FormatListNumbered
 import androidx.compose.material.icons.rounded.HealthAndSafety
 import androidx.compose.material.icons.rounded.History
@@ -493,7 +493,7 @@ fun HomeScreen(
               onCreateAutomation()
             }
             ControlShortcutChip("Programador", Icons.Rounded.Schedule, onOpenScheduler)
-            ControlShortcutChip("Actividad", Icons.Rounded.EventNote, onOpenActivityCenter)
+            ControlShortcutChip("Actividad", Icons.AutoMirrored.Rounded.EventNote, onOpenActivityCenter)
             ControlShortcutChip("Biblioteca (${state.savedTemplatesCount})", Icons.Rounded.Bookmarks, onOpenLibrary)
             ControlShortcutChip("Historial", Icons.Rounded.History, onOpenHistoryTab)
             ControlShortcutChip("Diagnóstico", Icons.Rounded.HealthAndSafety, onOpenDiagnostics)

@@ -349,6 +349,28 @@ class MessageEditorViewModel(
     }
   }
 
+  fun removeMessagesAt(indices: Set<Int>) {
+    if (indices.isEmpty()) return
+    container.updateDraft { draft ->
+      val remaining = draft.multipleMessages.filterIndexed { idx, _ -> idx !in indices }
+      draft.copy(multipleMessages = remaining)
+    }
+  }
+
+  fun duplicateMessagesAt(indices: Set<Int>) {
+    if (indices.isEmpty()) return
+    container.updateDraft { draft ->
+      val toCopy = draft.multipleMessages.filterIndexed { idx, _ -> idx in indices }
+      if (toCopy.isEmpty()) return@updateDraft draft
+      val available = (SafetyLimits.MAX_MULTIPLE_MESSAGES_LIMIT - draft.multipleMessages.size).coerceAtLeast(0)
+      if (available == 0) {
+        validationError.value = "Límite máximo de ${SafetyLimits.MAX_MULTIPLE_MESSAGES_LIMIT} mensajes."
+        return@updateDraft draft
+      }
+      draft.copy(multipleMessages = draft.multipleMessages + toCopy.take(available))
+    }
+  }
+
   fun clearAllMultipleMessages() {
     container.updateDraft { it.copy(multipleMessages = emptyList()) }
   }

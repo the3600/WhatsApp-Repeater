@@ -201,6 +201,9 @@ fun DiagnosticsScreen(
                 val opened = runCatching { context.startActivity(batteryIntent); true }.getOrDefault(false)
                 if (!opened) AccessibilitySettingsHelper.openAppDetailsSettings(context)
               }
+              DiagnosticActionType.OPEN_EXACT_ALARMS -> {
+                com.whatsapprepeater.app.scheduler.SchedulerAlarmHelper(context.applicationContext).openExactAlarmSettings()
+              }
               DiagnosticActionType.OPEN_UNKNOWN_SOURCES -> {
                 val pkgIntent = Intent(
                   Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
