@@ -50,7 +50,7 @@ jobs:
           java-version: '17'
 
       - name: Configurar Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
 
       - name: Dar permisos a Gradle Wrapper
         run: chmod +x ./gradlew
@@ -314,7 +314,7 @@ jobs:
 
       - name: Configurar Gradle
         if: steps.ver.outputs.should_publish == 'true'
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
 
       - name: Validar existencia de GitHub Secrets de firma
         if: steps.ver.outputs.should_publish == 'true'
